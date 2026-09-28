@@ -28,6 +28,15 @@
     <!-- Биометрическая защита входа -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Package visibility (Android 11+, API 30+) — CLAUDE.md §5.1, кнопка микрофона в чате:
+         без этого объявления intent.resolveActivity()/launch() для RecognizerIntent может не
+         найти системный сервис распознавания речи на API 30+ (ChatScreen.kt, Шаг 4). -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"

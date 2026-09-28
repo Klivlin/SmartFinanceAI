@@ -4,22 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import dagger.hilt.android.AndroidEntryPoint
 import ru.vogu.smartfinance.core.ui.theme.SmartFinanceTheme
+import ru.vogu.smartfinance.presentation.navigation.SmartFinanceNavGraph
 
 /**
- * Единственная Activity приложения (single-Activity архитектура, Navigation Compose).
- *
- * NavGraph с полноценным чат-экраном, сканером и аналитикой подключается в Шаге 4
- * (presentation/navigation/NavGraph.kt) — сейчас здесь временная точка входа,
- * подтверждающая, что DI/Theme/Manifest корректно связаны.
+ * Единственная Activity приложения (single-Activity архитектура, Navigation Compose —
+ * CLAUDE.md §6). NavGraph подключает главный Chat-экран (Шаг 4); Scanner/Accounts/Analytics
+ * добавляются в граф по мере готовности (Шаги 5-6 — см. NavGraph.kt).
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -28,21 +20,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             SmartFinanceTheme {
-                SmartFinanceAppRoot()
+                SmartFinanceNavGraph()
             }
         }
-    }
-}
-
-@Composable
-private fun SmartFinanceAppRoot() {
-    Scaffold { innerPadding ->
-        Text(
-            text = "SmartFinance AI — Шаг 1 готов. NavGraph и ChatScreen — Шаг 4.",
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp)
-        )
     }
 }
