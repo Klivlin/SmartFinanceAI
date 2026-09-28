@@ -11,11 +11,14 @@ import ru.vogu.smartfinance.core.database.entity.TransactionSource
 import ru.vogu.smartfinance.core.database.entity.TransactionType
 import ru.vogu.smartfinance.data.mapper.toDomain
 import ru.vogu.smartfinance.data.mapper.toEntity
+import ru.vogu.smartfinance.domain.model.CategoryAmount
+import ru.vogu.smartfinance.domain.model.DailySpendingPoint
 import ru.vogu.smartfinance.domain.model.SplitItem
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import java.math.BigDecimal
 import java.time.Instant
+import java.time.LocalDate
 import javax.inject.Inject
 
 class TransactionRepositoryImpl @Inject constructor(
@@ -32,6 +35,16 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override fun observeByDateRange(fromInclusive: Instant, toExclusive: Instant): Flow<List<Transaction>> =
         transactionDao.observeByDateRange(fromInclusive, toExclusive).map { list -> list.map { it.toDomain() } }
+
+    override fun observeSpendingByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>> =
+        transactionDao.observeSpendingByCategory(fromInclusive, toExclusive).map { rows ->
+            rows.map { CategoryAmount(categoryId = it.categoryId, totalAmountBase = it.totalAmountBase) }
+        }
+
+    override fun observeDailySpending(fromInclusive: Instant, toExclusive: Instant): Flow<List<DailySpendingPoint>> =
+        transactionDao.observeDailySpending(fromInclusive, toExclusive).map { rows ->
+            rows.map { DailySpendingPoint(date = LocalDate.ofEpochDay(it.dayEpochDay), amountBase = it.totalAmountBase) }
+        }
 
     override suspend fun getById(id: Long): Transaction? {
         val entity = transactionDao.getById(id) ?: return null

@@ -7,6 +7,7 @@ import ru.vogu.smartfinance.data.mapper.toDomain
 import ru.vogu.smartfinance.data.mapper.toEntity
 import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import java.math.BigDecimal
 import javax.inject.Inject
 
 class CategoryRepositoryImpl @Inject constructor(
@@ -41,5 +42,12 @@ class CategoryRepositoryImpl @Inject constructor(
             "Системная категория \"${category.name}\" не может быть удалена — на её id ссылается промпт Gemini."
         }
         categoryDao.delete(category.toEntity())
+    }
+
+    override suspend fun updateCategoryBudget(categoryId: Long, monthlyBudget: BigDecimal?) {
+        require(monthlyBudget == null || monthlyBudget.signum() > 0) {
+            "Лимит бюджета должен быть положительным (или null, чтобы снять лимит)."
+        }
+        categoryDao.updateBudget(categoryId, monthlyBudget)
     }
 }

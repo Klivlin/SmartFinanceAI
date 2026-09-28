@@ -3,6 +3,8 @@ package ru.vogu.smartfinance.domain.repository
 import kotlinx.coroutines.flow.Flow
 import ru.vogu.smartfinance.core.database.entity.TransactionSource
 import ru.vogu.smartfinance.core.database.entity.TransactionType
+import ru.vogu.smartfinance.domain.model.CategoryAmount
+import ru.vogu.smartfinance.domain.model.DailySpendingPoint
 import ru.vogu.smartfinance.domain.model.SplitItem
 import ru.vogu.smartfinance.domain.model.Transaction
 import java.math.BigDecimal
@@ -14,6 +16,12 @@ interface TransactionRepository {
     fun observeByAccount(accountId: Long): Flow<List<Transaction>>
     fun observeByDateRange(fromInclusive: Instant, toExclusive: Instant): Flow<List<Transaction>>
     suspend fun getById(id: Long): Transaction?
+
+    /** Сумма расходов по категории за период — Pie Chart аналитики и прогресс-бары бюджета (CLAUDE.md §2.5/§5.2). */
+    fun observeSpendingByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>>
+
+    /** Динамика расходов по дням за период — график в аналитике (CLAUDE.md §5.2). */
+    fun observeDailySpending(fromInclusive: Instant, toExclusive: Instant): Flow<List<DailySpendingPoint>>
 
     /**
      * Создаёт транзакцию и атомарно (в одной Room-транзакции) обновляет баланс(ы) затронутых

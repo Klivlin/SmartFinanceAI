@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import ru.vogu.smartfinance.core.database.entity.CategoryEntity
+import java.math.BigDecimal
 
 @Dao
 interface CategoryDao {
@@ -48,4 +49,13 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE LOWER(name) = LOWER(:name) LIMIT 1")
     suspend fun findByName(name: String): CategoryEntity?
+
+    /**
+     * Отдельный от [update] метод: меняет только месячный лимит бюджета (CLAUDE.md §2.5) и
+     * намеренно обходит запрет на изменение системных категорий — лимит бюджета настраивается
+     * пользователем даже для предустановленных категорий вроде "Кафе" (см. пример в CLAUDE.md
+     * §2.5), в отличие от их имени/иконки, на которые ссылается промпт Gemini (CLAUDE.md §3.3).
+     */
+    @Query("UPDATE categories SET monthly_budget = :monthlyBudget WHERE id = :categoryId")
+    suspend fun updateBudget(categoryId: Long, monthlyBudget: BigDecimal?)
 }

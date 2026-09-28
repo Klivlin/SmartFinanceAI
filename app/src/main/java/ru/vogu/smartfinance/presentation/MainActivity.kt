@@ -10,8 +10,8 @@ import ru.vogu.smartfinance.presentation.navigation.SmartFinanceNavGraph
 
 /**
  * Единственная Activity приложения (single-Activity архитектура, Navigation Compose —
- * CLAUDE.md §6). NavGraph подключает главный Chat-экран (Шаг 4); Scanner/Accounts/Analytics
- * добавляются в граф по мере готовности (Шаги 5-6 — см. NavGraph.kt).
+ * CLAUDE.md §6). NavGraph подключает все экраны приложения (Chat/Scanner/Analytics/Budget/
+ * Accounts — см. NavGraph.kt), реализация которых завершена по шагам CLAUDE.md §9.5.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
