@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Резервное копирование через Android Auto Backup отключено на уровне приложения
+    (android:allowBackup="false" в манифесте), т.к. база данных SQLCipher и
+    EncryptedSharedPreferences привязаны к Android Keystore конкретного устройства —
+    восстановление на другое устройство привело бы к неработающему шифрованному хранилищу.
+    Экспорт/импорт данных реализован явно через модуль настроек (CLAUDE.md §2.7).
+-->
+<full-backup-content>
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>

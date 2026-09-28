@@ -1,0 +1,7 @@
+# Скопируй этот файл в local.properties (он в .gitignore и не попадёт в git) и заполни своими значениями.
+
+# Путь к Android SDK — Android Studio подставит автоматически при первом открытии проекта.
+# sdk.dir=/Users/你的имя/Library/Android/sdk
+
+# Ключ Gemini API — получить на https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=твой_ключ_здесь

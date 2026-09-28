@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Плейсхолдер-монограмма "S". Финальная иконка должна быть заменена дизайнером/через Image Asset Studio. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M39,34 C39,28 44,24 54,24 C62,24 68,27 71,32 L63,38 C61,35 58,33 54,33 C50,33 47,34.5 47,37 C47,40 51,41 56,42.5 C65,45 72,49 72,58 C72,67 65,73 54,73 C44,73 37,68 34,61 L42.5,55.5 C44.5,60 48.5,64 54.5,64 C59.5,64 63,62 63,58.5 C63,55 58.5,53.5 53,52 C44.5,49.5 39,45.5 39,34 Z" />
+</vector>

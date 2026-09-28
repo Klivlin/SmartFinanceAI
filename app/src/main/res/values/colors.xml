@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Плейсхолдер для иконки запуска; полная цветовая схема M3 — в Шаге 4 (core/ui/theme/Color.kt). -->
+    <color name="ic_launcher_background">#1B5E20</color>
+</resources>

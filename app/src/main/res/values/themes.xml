@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Базовая тема на время Шага 1. Полная Material 3 динамическая тема
+         (Color.kt / Theme.kt / Type.kt) добавляется в Шаге 4 (presentation/chat, core/ui/theme). -->
+    <style name="Theme.SmartFinanceAI" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
