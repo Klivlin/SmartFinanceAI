@@ -80,3 +80,14 @@ data class GeminiTransactionDto(
     val acc: String,
     val tp: String
 )
+
+/**
+ * Одна позиция товарного чека, распознаваемая Gemini из предотфильтрованных OCR-строк —
+ * CLAUDE.md §4.2. `n` — название позиции, `a` — сумма позиции, `c` — id категории.
+ */
+@Serializable
+data class GeminiReceiptItemDto(
+    val n: String,
+    val a: Double,
+    val c: Int
+)

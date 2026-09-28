@@ -7,11 +7,13 @@ import dagger.hilt.components.SingletonComponent
 import ru.vogu.smartfinance.data.repository.AccountRepositoryImpl
 import ru.vogu.smartfinance.data.repository.CategoryRepositoryImpl
 import ru.vogu.smartfinance.data.repository.NliExpenseRepositoryImpl
+import ru.vogu.smartfinance.data.repository.ReceiptRepositoryImpl
 import ru.vogu.smartfinance.data.repository.SemanticAliasRepositoryImpl
 import ru.vogu.smartfinance.data.repository.TransactionRepositoryImpl
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
 import ru.vogu.smartfinance.domain.repository.NliExpenseRepository
+import ru.vogu.smartfinance.domain.repository.ReceiptRepository
 import ru.vogu.smartfinance.domain.repository.SemanticAliasRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import javax.inject.Singleton
@@ -39,4 +41,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindNliExpenseRepository(impl: NliExpenseRepositoryImpl): NliExpenseRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindReceiptRepository(impl: ReceiptRepositoryImpl): ReceiptRepository
 }

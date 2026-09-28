@@ -5,6 +5,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import retrofit2.HttpException
 import ru.vogu.smartfinance.BuildConfig
+import ru.vogu.smartfinance.core.common.DefaultCategories
 import ru.vogu.smartfinance.core.common.Resource
 import ru.vogu.smartfinance.core.common.normalizeAsAliasKeyword
 import ru.vogu.smartfinance.core.database.entity.TransactionSource
@@ -13,13 +14,14 @@ import ru.vogu.smartfinance.core.network.dto.GeminiContent
 import ru.vogu.smartfinance.core.network.dto.GeminiGenerateContentRequest
 import ru.vogu.smartfinance.core.network.dto.GeminiGenerationConfig
 import ru.vogu.smartfinance.core.network.dto.GeminiPart
+import ru.vogu.smartfinance.core.network.dto.GeminiReceiptItemDto
 import ru.vogu.smartfinance.core.network.dto.GeminiSchema
 import ru.vogu.smartfinance.core.network.dto.GeminiTransactionDto
-import ru.vogu.smartfinance.core.common.DefaultCategories
 import ru.vogu.smartfinance.core.security.GeminiApiKeyProvider
 import ru.vogu.smartfinance.domain.model.AccountHint
 import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.model.ParsedExpense
+import ru.vogu.smartfinance.domain.model.ParsedReceiptItem
 import java.io.IOException
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -87,6 +89,122 @@ class GeminiClient @Inject constructor(
         } catch (e: SerializationException) {
             Resource.Error("Gemini вернул некорректный JSON, не удалось его разобрать.", e)
         }
+    }
+
+    /**
+     * Tier 3 для сканера чеков (OCR-путь) — CLAUDE.md §4.2. На вход подаются уже локально
+     * отфильтрованные строки чека (см. [ru.vogu.smartfinance.data.parser.ReceiptOcrParser]),
+     * на выходе — позиции с категорией для сплит-транзакции. Контекст чата по-прежнему не
+     * передаётся (stateless, как и в [parseExpenses]).
+     */
+    suspend fun parseReceiptItems(
+        sanitizedLines: List<String>,
+        categories: List<Category>
+    ): Resource<List<ParsedReceiptItem>> {
+        val apiKey = apiKeyProvider.getApiKey()
+        if (apiKey.isBlank()) {
+            return Resource.Error(
+                "Не задан ключ Gemini API. Добавьте его в настройках приложения, чтобы " +
+                    "распознавать позиции чека (QR-чеки по-прежнему обрабатываются офлайн)."
+            )
+        }
+
+        val request = buildReceiptRequest(sanitizedLines, categories)
+
+        return try {
+            val response = geminiApi.generateContent(
+                model = BuildConfig.GEMINI_MODEL,
+                apiKey = apiKey,
+                request = request
+            )
+
+            response.promptFeedback?.blockReason?.let { reason ->
+                return Resource.Error("Gemini отклонил запрос по соображениям безопасности ($reason).")
+            }
+
+            val rawJson = response.candidates
+                ?.firstOrNull()
+                ?.content
+                ?.parts
+                ?.firstOrNull()
+                ?.text
+                ?: return Resource.Error("Gemini вернул пустой ответ. Попробуйте сфотографировать чек ещё раз.")
+
+            val dtos = json.decodeFromString(ListSerializer(GeminiReceiptItemDto.serializer()), rawJson)
+            val parsed = dtos.mapNotNull { it.toParsedReceiptItemOrNull(categories) }
+
+            if (parsed.isEmpty()) {
+                Resource.Error("Не удалось распознать ни одной позиции на чеке.")
+            } else {
+                Resource.Success(parsed)
+            }
+        } catch (e: IOException) {
+            Resource.Error("Нет соединения с сервером Gemini. Проверьте интернет и попробуйте снова.", e)
+        } catch (e: HttpException) {
+            Resource.Error(httpErrorMessage(e), e)
+        } catch (e: SerializationException) {
+            Resource.Error("Gemini вернул некорректный JSON, не удалось его разобрать.", e)
+        }
+    }
+
+    private fun buildReceiptRequest(
+        lines: List<String>,
+        categories: List<Category>
+    ): GeminiGenerateContentRequest = GeminiGenerateContentRequest(
+        systemInstruction = GeminiContent(parts = listOf(GeminiPart(buildReceiptSystemPrompt(categories)))),
+        contents = listOf(GeminiContent(role = "user", parts = listOf(GeminiPart(lines.joinToString("\n"))))),
+        generationConfig = GeminiGenerationConfig(
+            temperature = 0.1,
+            responseSchema = buildReceiptResponseSchema()
+        )
+    )
+
+    private fun buildReceiptSystemPrompt(categories: List<Category>): String {
+        val categoriesList = categories.sortedBy { it.sortOrder }.joinToString(", ") { "${it.id}:${it.name}" }
+        return """
+            Ты — парсер товарных чеков для приложения личного учёта финансов. Тебе присланы
+            построчно предварительно отфильтрованные строки OCR-скана кассового чека — часть
+            строк может быть распознана с ошибками или обрублена, часть вообще не является
+            позицией товара (мусор после локальной фильтрации).
+            Верни ТОЛЬКО валидный JSON-массив объектов по заданной схеме. Никакого текста до
+            или после массива, без markdown.
+            Категории (id:название): [$categoriesList]
+            Правила:
+            - Для каждой строки, где ты уверенно видишь название позиции и её цену — верни один
+              объект {"n": название, "a": сумма, "c": id категории}.
+            - Строки без распознаваемой цены или явно не являющиеся позицией товара — пропусти.
+            - Поле "a" — всегда положительное число.
+            - Если категория неочевидна — выбери наиболее подходящую по названию позиции.
+        """.trimIndent()
+    }
+
+    private fun buildReceiptResponseSchema(): GeminiSchema = GeminiSchema(
+        type = "ARRAY",
+        items = GeminiSchema(
+            type = "OBJECT",
+            properties = mapOf(
+                "n" to GeminiSchema(type = "STRING"),
+                "a" to GeminiSchema(type = "NUMBER"),
+                "c" to GeminiSchema(type = "INTEGER")
+            ),
+            required = listOf("n", "a", "c")
+        )
+    )
+
+    /** Защитный маппинг недоверенных данных с границы сети — CLAUDE.md §9.4. */
+    private fun GeminiReceiptItemDto.toParsedReceiptItemOrNull(categories: List<Category>): ParsedReceiptItem? {
+        val amount = try {
+            BigDecimal(a.toString())
+        } catch (e: NumberFormatException) {
+            return null
+        }
+        if (amount.signum() <= 0) return null
+
+        val name = n.trim().ifBlank { "Позиция" }
+        val categoryId = categories.firstOrNull { it.id == c.toLong() }?.id
+            ?: DefaultCategories.OTHER_CATEGORY_ID
+
+        return ParsedReceiptItem(name = name, amount = amount, categoryId = categoryId)
     }
 
     private fun buildRequest(
