@@ -1,0 +1,42 @@
+package ru.vogu.smartfinance.core.di
+
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import ru.vogu.smartfinance.data.repository.AccountRepositoryImpl
+import ru.vogu.smartfinance.data.repository.CategoryRepositoryImpl
+import ru.vogu.smartfinance.data.repository.NliExpenseRepositoryImpl
+import ru.vogu.smartfinance.data.repository.SemanticAliasRepositoryImpl
+import ru.vogu.smartfinance.data.repository.TransactionRepositoryImpl
+import ru.vogu.smartfinance.domain.repository.AccountRepository
+import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.repository.NliExpenseRepository
+import ru.vogu.smartfinance.domain.repository.SemanticAliasRepository
+import ru.vogu.smartfinance.domain.repository.TransactionRepository
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindAccountRepository(impl: AccountRepositoryImpl): AccountRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCategoryRepository(impl: CategoryRepositoryImpl): CategoryRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindTransactionRepository(impl: TransactionRepositoryImpl): TransactionRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSemanticAliasRepository(impl: SemanticAliasRepositoryImpl): SemanticAliasRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindNliExpenseRepository(impl: NliExpenseRepositoryImpl): NliExpenseRepository
+}
