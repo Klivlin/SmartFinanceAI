@@ -8,10 +8,12 @@ import ru.vogu.smartfinance.core.common.startOfMonth
 import ru.vogu.smartfinance.core.common.startOfNextDay
 import ru.vogu.smartfinance.core.common.startOfNextMonth
 import ru.vogu.smartfinance.core.database.entity.TransactionType
+import ru.vogu.smartfinance.domain.model.Account
 import ru.vogu.smartfinance.domain.model.DashboardSummary
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.repository.ExchangeRateRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import java.math.BigDecimal
 import java.time.Instant
@@ -27,7 +29,8 @@ import javax.inject.Inject
 class ObserveDashboardSummaryUseCase @Inject constructor(
     private val accountRepository: AccountRepository,
     private val transactionRepository: TransactionRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val exchangeRateRepository: ExchangeRateRepository
 ) {
     operator fun invoke(now: Instant = Instant.now()): Flow<DashboardSummary> {
         val dayStart = now.startOfDay()
@@ -41,14 +44,7 @@ class ObserveDashboardSummaryUseCase @Inject constructor(
             transactionRepository.observeByDateRange(monthStart, monthEnd),
             categoryRepository.observeBudgeted()
         ) { accounts, todayTransactions, monthTransactions, budgetedCategories ->
-            // Общий баланс считаем только по счетам в базовой валюте — конвертация остатков
-            // мультивалютных счетов в реальном времени требует сервиса курсов ЦБ, которого
-            // в проекте пока нет (каждая ОТДЕЛЬНАЯ операция уже конвертируется через
-            // Transaction.amountBase на момент её создания — см. ProcessNliInputUseCase/
-            // TransactionRepositoryImpl, это не связано с текущим остатком по счёту).
-            val totalBalance = accounts
-                .filter { it.currency == Constants.DEFAULT_BASE_CURRENCY }
-                .fold(BigDecimal.ZERO) { sum, account -> sum + account.balance }
+            val totalBalance = totalBalanceInBaseCurrency(accounts)
 
             val spentToday = todayTransactions.sumExpensesBase()
             val spentThisMonth = monthTransactions.sumExpensesBase()
@@ -71,4 +67,22 @@ class ObserveDashboardSummaryUseCase @Inject constructor(
     private fun List<Transaction>.sumExpensesBase(): BigDecimal =
         this.filter { it.transactionType == TransactionType.EXPENSE }
             .fold(BigDecimal.ZERO) { sum, transaction -> sum + transaction.amountBase }
+
+    /**
+     * Остаток по каждому счёту конвертируется в базовую валюту по реальному курсу (CLAUDE.md
+     * §2.1) — в т.ч. крипто-счета. Курс кэшируется офлайн (см. [ExchangeRateRepository]), а
+     * при сбое сети/отсутствии кэша для конкретной валюты счёт просто не учитывается в сумме,
+     * а не роняет весь дашборд.
+     */
+    private suspend fun totalBalanceInBaseCurrency(accounts: List<Account>): BigDecimal =
+        accounts.fold(BigDecimal.ZERO) { sum, account ->
+            val converted = if (account.currency == Constants.DEFAULT_BASE_CURRENCY) {
+                account.balance
+            } else {
+                runCatching {
+                    exchangeRateRepository.convert(account.balance, account.currency, Constants.DEFAULT_BASE_CURRENCY)
+                }.getOrNull()
+            }
+            sum + (converted ?: BigDecimal.ZERO)
+        }
 }

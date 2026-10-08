@@ -100,7 +100,7 @@ class ProcessNliInputUseCaseTest {
         val categorySlot = slot<Long?>()
         coEvery {
             transactionRepository.createTransaction(
-                accountId = any(), toAccountId = any(), categoryId = capture(categorySlot),
+                accountId = any(), toAccountId = any(), categoryId = captureNullable(categorySlot),
                 amount = any(), transactionType = any(), title = any(), notes = any(),
                 timestamp = any(), source = any(), rawInputText = any(),
                 originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),

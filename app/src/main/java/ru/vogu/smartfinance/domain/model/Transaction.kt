@@ -21,6 +21,7 @@ data class Transaction(
     val source: TransactionSource,
     val rawInputText: String?,
     val transferFeeAmount: BigDecimal?,
+    val toAmount: BigDecimal? = null,
     val recurringRuleId: Long?,
     val isSplit: Boolean,
     val splitItems: List<SplitItem> = emptyList(),

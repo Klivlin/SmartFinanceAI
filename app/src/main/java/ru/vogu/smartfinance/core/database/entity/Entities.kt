@@ -25,7 +25,11 @@ enum class AccountType {
     DEBIT_CARD,
     CASH,
     SAVINGS,
-    CREDIT_CARD
+    CREDIT_CARD,
+
+    /** Криптовалютный счёт — CLAUDE.md §2.1 расширено. Поле [AccountEntity.currency] хранит
+     * тикер (см. [ru.vogu.smartfinance.domain.model.CryptoAsset]), а не ISO 4217 код. */
+    CRYPTO
 }
 
 /** Тип операции — CLAUDE.md §2.2. */
@@ -96,9 +100,24 @@ data class AccountEntity(
     @ColumnInfo(name = "statement_day")
     val statementDay: Int? = null,
 
+    /**
+     * Годовая процентная ставка (только для SAVINGS), например 12.5 = 12.5% годовых с
+     * ежемесячной капитализацией — используется для прогноза накоплений (CLAUDE.md §2.1).
+     */
+    @ColumnInfo(name = "interest_rate_percent")
+    val interestRatePercent: BigDecimal? = null,
+
     /** Архивные счета скрываются из выбора, но их история и баланс сохраняются (см. FK RESTRICT ниже). */
     @ColumnInfo(name = "is_archived")
     val isArchived: Boolean = false,
+
+    /**
+     * Счёт, который отображается свёрнутым на главном Chat-экране (CLAUDE.md §5.1) — ровно у
+     * одного активного счёта может быть true одновременно (инвариант поддерживается
+     * [ru.vogu.smartfinance.core.database.dao.AccountDao.setPrimary]).
+     */
+    @ColumnInfo(name = "is_primary")
+    val isPrimary: Boolean = false,
 
     @ColumnInfo(name = "sort_order")
     val sortOrder: Int = 0,
@@ -236,6 +255,15 @@ data class TransactionEntity(
     /** Комиссия перевода (только TRANSFER), в валюте счёта-источника. */
     @ColumnInfo(name = "transfer_fee_amount")
     val transferFeeAmount: BigDecimal? = null,
+
+    /**
+     * Только для TRANSFER между счетами в РАЗНЫХ валютах (в т.ч. крипто, CLAUDE.md §2.1) —
+     * сумма зачисления на [toAccountId] в ЕГО валюте, посчитанная по реальному курсу на момент
+     * перевода (см. [ru.vogu.smartfinance.domain.repository.ExchangeRateRepository]). null —
+     * перевод внутри одной валюты, зачисляется та же [amount].
+     */
+    @ColumnInfo(name = "to_amount")
+    val toAmount: BigDecimal? = null,
 
     /** Если транзакция создана автоматически по регулярному платежу. */
     @ColumnInfo(name = "recurring_rule_id")
@@ -405,4 +433,28 @@ data class RecurringRuleEntity(
 
     @ColumnInfo(name = "created_at")
     val createdAt: Instant = Instant.now()
+)
+
+// ──────────────────────────── exchange_rates ────────────────────────────
+
+/**
+ * Локальный кэш курсов валют/криптовалют к рублю — CLAUDE.md §2.1 (мультивалютность),
+ * подпитывается [ru.vogu.smartfinance.core.network.FiatExchangeRateApi]/
+ * [ru.vogu.smartfinance.core.network.CryptoExchangeRateApi]. Позволяет конвертировать баланс
+ * при смене валюты счёта и переводы между счетами в разных валютах, а также работать (по
+ * последнему известному курсу) без интернета — CLAUDE.md §2.7 Offline-First.
+ */
+@Entity(tableName = "exchange_rates")
+data class ExchangeRateEntity(
+    /** Код фиатной валюты (ISO 4217) или тикер криптовалюты (см. [ru.vogu.smartfinance.domain.model.CryptoAsset]). */
+    @PrimaryKey
+    @ColumnInfo(name = "currency_code")
+    val currencyCode: String,
+
+    /** Сколько рублей стоит одна единица [currencyCode]. */
+    @ColumnInfo(name = "rate_to_rub")
+    val rateToRub: BigDecimal,
+
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Instant
 )

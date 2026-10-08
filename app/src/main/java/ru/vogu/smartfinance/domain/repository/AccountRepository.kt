@@ -10,6 +10,12 @@ interface AccountRepository {
     fun observeAll(): Flow<List<Account>>
     suspend fun getById(id: Long): Account?
 
+    /** Счёт, свёрнуто отображаемый на главном Chat-экране (CLAUDE.md §5.1). */
+    fun observePrimary(): Flow<Account?>
+
+    /** Делает [accountId] основным для отображения на главном экране; снимает флаг с прежнего основного счёта. */
+    suspend fun setPrimaryAccount(accountId: Long)
+
     /**
      * Находит наиболее подходящий счёт под подсказку из NLI ("нал", "тинька"...).
      * Если [hint] == null или совпадений нет — возвращает счёт по умолчанию (первый активный).

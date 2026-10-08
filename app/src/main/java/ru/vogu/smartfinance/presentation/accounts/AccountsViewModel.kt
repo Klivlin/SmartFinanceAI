@@ -44,11 +44,17 @@ class AccountsViewModel @Inject constructor(
             AccountsIntent.AddAccountRequested -> uiState.update { it.copy(isAddAccountVisible = true) }
             AccountsIntent.DismissAddAccount -> uiState.update { it.copy(isAddAccountVisible = false) }
             is AccountsIntent.CreateAccount -> createAccount(intent.form)
+            is AccountsIntent.EditAccountRequested -> uiState.update { it.copy(editingAccountId = intent.accountId) }
+            AccountsIntent.DismissEditAccount -> uiState.update { it.copy(editingAccountId = null) }
+            is AccountsIntent.SaveEditedAccount -> saveEditedAccount(intent.accountId, intent.form)
             is AccountsIntent.TransferRequested -> uiState.update { it.copy(transferFromAccountId = intent.fromAccountId) }
             AccountsIntent.DismissTransfer -> uiState.update { it.copy(transferFromAccountId = null) }
             is AccountsIntent.SubmitTransfer -> submitTransfer(intent)
             is AccountsIntent.ArchiveAccount -> archiveAccount(intent.accountId)
             AccountsIntent.ErrorMessageShown -> uiState.update { it.copy(errorMessage = null) }
+            is AccountsIntent.SetPrimaryAccount -> setPrimaryAccount(intent.accountId)
+            is AccountsIntent.ProjectionRequested -> uiState.update { it.copy(projectionAccountId = intent.accountId) }
+            AccountsIntent.DismissProjection -> uiState.update { it.copy(projectionAccountId = null) }
         }
     }
 
@@ -61,6 +67,7 @@ class AccountsViewModel @Inject constructor(
         val creditLimit = form.creditLimitText.trim().replace(',', '.').toBigDecimalOrNull()
         val gracePeriodDays = form.gracePeriodDaysText.trim().toIntOrNull()
         val statementDay = form.statementDayText.trim().toIntOrNull()
+        val interestRatePercent = form.interestRatePercentText.trim().replace(',', '.').toBigDecimalOrNull()
 
         uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
@@ -71,12 +78,41 @@ class AccountsViewModel @Inject constructor(
                 initialBalance = initialBalance,
                 creditLimit = creditLimit,
                 gracePeriodDays = gracePeriodDays,
-                statementDay = statementDay
+                statementDay = statementDay,
+                interestRatePercent = interestRatePercent
             )
             when (result) {
                 is Resource.Success -> {
                     uiState.update { it.copy(isSubmitting = false, isAddAccountVisible = false) }
                     _effect.send(AccountsEffect.ShowToast("Счёт «${result.data.name}» создан"))
+                }
+                is Resource.Error -> uiState.update { it.copy(isSubmitting = false, errorMessage = result.message) }
+                Resource.Loading -> Unit
+            }
+        }
+    }
+
+    private fun saveEditedAccount(accountId: Long, form: NewAccountForm) {
+        val creditLimit = form.creditLimitText.trim().replace(',', '.').toBigDecimalOrNull()
+        val gracePeriodDays = form.gracePeriodDaysText.trim().toIntOrNull()
+        val statementDay = form.statementDayText.trim().toIntOrNull()
+        val interestRatePercent = form.interestRatePercentText.trim().replace(',', '.').toBigDecimalOrNull()
+
+        uiState.update { it.copy(isSubmitting = true) }
+        viewModelScope.launch {
+            val result = manageAccountUseCase.updateAccount(
+                accountId = accountId,
+                name = form.name,
+                currency = form.currency,
+                creditLimit = creditLimit,
+                gracePeriodDays = gracePeriodDays,
+                statementDay = statementDay,
+                interestRatePercent = interestRatePercent
+            )
+            when (result) {
+                is Resource.Success -> {
+                    uiState.update { it.copy(isSubmitting = false, editingAccountId = null) }
+                    _effect.send(AccountsEffect.ShowToast("Счёт «${result.data.name}» обновлён"))
                 }
                 is Resource.Error -> uiState.update { it.copy(isSubmitting = false, errorMessage = result.message) }
                 Resource.Loading -> Unit
@@ -121,6 +157,16 @@ class AccountsViewModel @Inject constructor(
             when (val result = manageAccountUseCase.archiveAccount(accountId)) {
                 is Resource.Error -> uiState.update { it.copy(errorMessage = result.message) }
                 is Resource.Success -> _effect.send(AccountsEffect.ShowToast("Счёт архивирован"))
+                Resource.Loading -> Unit
+            }
+        }
+    }
+
+    private fun setPrimaryAccount(accountId: Long) {
+        viewModelScope.launch {
+            when (val result = manageAccountUseCase.setPrimaryAccount(accountId)) {
+                is Resource.Error -> uiState.update { it.copy(errorMessage = result.message) }
+                is Resource.Success -> _effect.send(AccountsEffect.ShowToast("Основной счёт изменён"))
                 Resource.Loading -> Unit
             }
         }

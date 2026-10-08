@@ -7,8 +7,10 @@ import android.content.pm.PackageManager
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,14 +21,28 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
+import ru.vogu.smartfinance.core.common.formatAsCurrency
 import ru.vogu.smartfinance.presentation.chat.components.ChatInputBar
 import ru.vogu.smartfinance.presentation.chat.components.DashboardHeader
 import ru.vogu.smartfinance.presentation.chat.components.EditTransactionBottomSheet
@@ -123,6 +140,17 @@ fun ChatScreen(
                 is ChatEffect.ShowToast -> coroutineScope.launch {
                     snackbarHostState.showSnackbar(effect.message)
                 }
+                is ChatEffect.TransactionDeleted -> coroutineScope.launch {
+                    val tx = effect.transaction
+                    val result = snackbarHostState.showSnackbar(
+                        message = "«${tx.title}» на ${tx.amount.formatAsCurrency(tx.originalCurrency)} удалено",
+                        actionLabel = "ОТМЕНИТЬ",
+                        withDismissAction = true
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        viewModel.onIntent(ChatIntent.RestoreTransaction(tx))
+                    }
+                }
             }
         }
     }
@@ -149,12 +177,83 @@ fun ChatScreen(
         )
     }
 
+    if (state.isClearChatDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onIntent(ChatIntent.ClearChatDismissed) },
+            title = { Text("Очистить чат?") },
+            text = {
+                Text(
+                    "Лента сообщений будет скрыта на этом устройстве. Все операции, балансы " +
+                        "и аналитика останутся без изменений — их можно посмотреть в «Категориях»."
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.onIntent(ChatIntent.ClearChatConfirmed) }) {
+                    Text("Очистить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onIntent(ChatIntent.ClearChatDismissed) }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    if (state.showInitialBalanceDialog) {
+        InitialBalanceDialog(
+            onConfirm = { amountText -> viewModel.onIntent(ChatIntent.InitialBalanceConfirmed(amountText)) },
+            onSkip = { viewModel.onIntent(ChatIntent.InitialBalanceSkipped) }
+        )
+    }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            CenterAlignedTopAppBar(title = { Text("SmartFinance AI") })
+            TopAppBar(
+                title = {
+                    Text(
+                        "ЧАТ",
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                },
+                actions = {
+                    // Аналитика/Счета/Категории/тема переехали в нижнюю навигацию и "Настройки"
+                    // (CLAUDE.md §5.2) — здесь остаётся только то, что относится к самому чату.
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "Ещё",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Очистить чат") },
+                            leadingIcon = { Icon(Icons.Filled.DeleteSweep, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.onIntent(ChatIntent.ClearChatRequested)
+                            }
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+        ru.vogu.smartfinance.core.ui.components.AppLogo(
+            modifier = Modifier.align(Alignment.Center)
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -162,6 +261,8 @@ fun ChatScreen(
         ) {
             DashboardHeader(
                 summary = state.dashboard,
+                primaryAccount = state.primaryAccount,
+                accounts = state.editingAccounts,
                 isExpanded = state.isHeaderExpanded,
                 onToggleExpand = { viewModel.onIntent(ChatIntent.HeaderExpandToggled) }
             )
@@ -198,6 +299,7 @@ fun ChatScreen(
                 canSend = state.canSend,
                 modifier = Modifier.imePadding()
             )
+        }
         }
     }
 }
@@ -244,6 +346,49 @@ private fun UserMessageBubble(message: ChatMessage.UserText) {
             }
         }
     }
+}
+
+/**
+ * Диалог первого запуска — CLAUDE.md список доработок, п.3 ("при первоначальном входе
+ * зафиксировать текущий баланс"). Основной счёт создаётся с балансом 0 (см.
+ * `SeedDatabaseCallback` в `DatabaseModule.kt`); без этого шага пользователю пришлось бы самому
+ * находить экран "Счета" и разбираться с переводом/корректировкой, чтобы отразить реальные деньги.
+ */
+@Composable
+private fun InitialBalanceDialog(onConfirm: (String) -> Unit, onSkip: () -> Unit) {
+    var amountText by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("Добро пожаловать!") },
+        text = {
+            Column {
+                Text(
+                    "Укажите, сколько денег у вас сейчас на основном счёте — это станет " +
+                        "стартовым балансом. Можно пропустить и указать позже на экране «Счета»."
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    label = { Text("Текущий баланс, ₽") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(amountText) }, enabled = amountText.isNotBlank()) {
+                Text("Сохранить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) { Text("Пропустить") }
+        }
+    )
 }
 
 @Composable

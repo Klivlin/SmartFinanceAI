@@ -27,17 +27,55 @@ class TransactionRepositoryImpl @Inject constructor(
     private val accountDao: AccountDao
 ) : TransactionRepository {
 
+    /**
+     * Лента чата (CLAUDE.md §5.1) должна видеть позиции сплит-чека (§2.3), иначе сканер
+     * (CLAUDE.md §4) выглядит так, будто просто создаёт одну обезличенную "Чек (N позиций)" без
+     * категорий, хотя каждая позиция уже категоризирована — см. [ParseReceiptUseCase.fromQrAndOcr].
+     * Базовый запрос отдаёт только `transactions` без join на `split_items`, поэтому докладываем
+     * их отдельным suspend-вызовом на каждую сплит-транзакцию текущей страницы ленты (их обычно
+     * единицы за раз — полноценный @Relation-джойн здесь избыточен).
+     */
     override fun observeRecent(limit: Int): Flow<List<Transaction>> =
-        transactionDao.observeRecent(limit).map { list -> list.map { it.toDomain() } }
+        transactionDao.observeRecent(limit).map { list ->
+            list.map { entity ->
+                if (entity.isSplit) {
+                    entity.toDomain(transactionDao.getSplitItems(entity.id).map { it.toDomain() })
+                } else {
+                    entity.toDomain()
+                }
+            }
+        }
+
+    override fun observeRecentByEntryOrder(limit: Int): Flow<List<Transaction>> =
+        transactionDao.observeRecentByEntryOrder(limit).map { list ->
+            list.map { entity ->
+                if (entity.isSplit) {
+                    entity.toDomain(transactionDao.getSplitItems(entity.id).map { it.toDomain() })
+                } else {
+                    entity.toDomain()
+                }
+            }
+        }
 
     override fun observeByAccount(accountId: Long): Flow<List<Transaction>> =
         transactionDao.observeByAccount(accountId).map { list -> list.map { it.toDomain() } }
 
+    override fun observeByCategory(categoryId: Long): Flow<List<Transaction>> =
+        transactionDao.observeByCategory(categoryId).map { list -> list.map { it.toDomain() } }
+
     override fun observeByDateRange(fromInclusive: Instant, toExclusive: Instant): Flow<List<Transaction>> =
         transactionDao.observeByDateRange(fromInclusive, toExclusive).map { list -> list.map { it.toDomain() } }
 
+    override suspend fun countByDateRange(fromInclusive: Instant, toExclusive: Instant): Int =
+        transactionDao.countByDateRange(fromInclusive, toExclusive)
+
     override fun observeSpendingByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>> =
         transactionDao.observeSpendingByCategory(fromInclusive, toExclusive).map { rows ->
+            rows.map { CategoryAmount(categoryId = it.categoryId, totalAmountBase = it.totalAmountBase) }
+        }
+
+    override fun observeIncomeByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>> =
+        transactionDao.observeIncomeByCategory(fromInclusive, toExclusive).map { rows ->
             rows.map { CategoryAmount(categoryId = it.categoryId, totalAmountBase = it.totalAmountBase) }
         }
 
@@ -52,6 +90,9 @@ class TransactionRepositoryImpl @Inject constructor(
         return entity.toDomain(splits)
     }
 
+    override suspend fun getAllForExport(): List<Transaction> =
+        transactionDao.getAllForExport().map { it.toDomain() }
+
     override suspend fun createTransaction(
         accountId: Long,
         toAccountId: Long?,
@@ -65,6 +106,7 @@ class TransactionRepositoryImpl @Inject constructor(
         rawInputText: String?,
         originalCurrency: String?,
         transferFeeAmount: BigDecimal?,
+        toAmount: BigDecimal?,
         recurringRuleId: Long?,
         splitItems: List<SplitItem>
     ): Transaction {
@@ -93,6 +135,7 @@ class TransactionRepositoryImpl @Inject constructor(
                 source = source,
                 rawInputText = rawInputText,
                 transferFeeAmount = transferFeeAmount,
+                toAmount = toAmount,
                 recurringRuleId = recurringRuleId,
                 isSplit = splitItems.isNotEmpty()
             )
@@ -102,7 +145,7 @@ class TransactionRepositoryImpl @Inject constructor(
                 splitItems = splitItems.map { it.toEntity() }
             )
 
-            applyBalanceDelta(accountId, toAccountId, amount, transferFeeAmount, transactionType)
+            applyBalanceDelta(accountId, toAccountId, amount, transferFeeAmount, toAmount, transactionType)
 
             val savedEntity = transactionDao.getById(transactionId) ?: error("Не удалось прочитать только что созданную транзакцию.")
             val savedSplits = transactionDao.getSplitItems(transactionId).map { it.toDomain() }
@@ -119,6 +162,7 @@ class TransactionRepositoryImpl @Inject constructor(
                 toAccountId = entity.toAccountId,
                 amount = entity.amount,
                 transferFeeAmount = entity.transferFeeAmount,
+                toAmount = entity.toAmount,
                 transactionType = entity.transactionType,
                 reverse = true
             )
@@ -138,6 +182,7 @@ class TransactionRepositoryImpl @Inject constructor(
                 toAccountId = previous.toAccountId,
                 amount = previous.amount,
                 transferFeeAmount = previous.transferFeeAmount,
+                toAmount = previous.toAmount,
                 transactionType = previous.transactionType,
                 reverse = true
             )
@@ -146,6 +191,7 @@ class TransactionRepositoryImpl @Inject constructor(
                 toAccountId = transaction.toAccountId,
                 amount = transaction.amount,
                 transferFeeAmount = transaction.transferFeeAmount,
+                toAmount = transaction.toAmount,
                 transactionType = transaction.transactionType,
                 reverse = false
             )
@@ -159,6 +205,7 @@ class TransactionRepositoryImpl @Inject constructor(
         toAccountId: Long?,
         amount: BigDecimal,
         transferFeeAmount: BigDecimal?,
+        toAmount: BigDecimal?,
         transactionType: TransactionType,
         reverse: Boolean = false
     ) {
@@ -170,7 +217,10 @@ class TransactionRepositoryImpl @Inject constructor(
                 val fee = transferFeeAmount ?: BigDecimal.ZERO
                 accountDao.adjustBalance(accountId, amount.add(fee).negate().multiply(sign))
                 if (toAccountId != null) {
-                    accountDao.adjustBalance(toAccountId, amount.multiply(sign))
+                    // toAmount — зачисление по реальному курсу, если счета в разных валютах
+                    // (в т.ч. крипто → рубли, CLAUDE.md §2.1); для одновалютных переводов null
+                    // и зачисляется та же сумма, что списана.
+                    accountDao.adjustBalance(toAccountId, (toAmount ?: amount).multiply(sign))
                 }
             }
             TransactionType.ADJUSTMENT -> accountDao.adjustBalance(accountId, amount.multiply(sign))

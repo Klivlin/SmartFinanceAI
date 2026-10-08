@@ -1,5 +1,7 @@
 package ru.vogu.smartfinance.presentation.chat.components
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -7,9 +9,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
@@ -18,6 +21,8 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +36,12 @@ import ru.vogu.smartfinance.core.database.entity.TransactionType
 import ru.vogu.smartfinance.domain.model.Account
 import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.model.Transaction
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 /**
  * BottomSheet кнопки "Изменить" на Action Card — CLAUDE.md §5.1. Правки применяются целиком
@@ -51,12 +62,38 @@ fun EditTransactionBottomSheet(
     var selectedCategoryId by remember(transaction.id) { mutableStateOf(transaction.categoryId) }
     var selectedAccountId by remember(transaction.id) { mutableStateOf(transaction.accountId) }
     var selectedToAccountId by remember(transaction.id) { mutableStateOf(transaction.toAccountId) }
+    var selectedDate by remember(transaction.id) {
+        mutableStateOf(transaction.timestamp.atZone(ZoneId.systemDefault()).toLocalDate())
+    }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = selectedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        selectedDate = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                    }
+                    showDatePicker = false
+                }) { Text("ОК") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Отмена") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     val amount = amountText.replace(',', '.').toBigDecimalOrNull()
     val canSave = amount != null && amount.signum() > 0 && title.isNotBlank() &&
         (type != TransactionType.TRANSFER || (selectedToAccountId != null && selectedToAccountId != selectedAccountId))
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -99,6 +136,27 @@ fun EditTransactionBottomSheet(
                     .padding(top = 12.dp)
             )
 
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                    .clickable { showDatePicker = true }
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = "Дата операции",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)
+                        .withLocale(Locale("ru", "RU"))
+                        .format(selectedDate),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+
             if (type != TransactionType.TRANSFER) {
                 DropdownField(
                     label = "Категория",
@@ -136,6 +194,10 @@ fun EditTransactionBottomSheet(
             Button(
                 onClick = {
                     val finalAmount = amount ?: return@Button
+                    // Дату меняем, время суток исходной операции сохраняем — иначе правка
+                    // одной только даты незаметно "телепортировала" бы операцию на полночь.
+                    val originalTime = transaction.timestamp.atZone(ZoneId.systemDefault()).toLocalTime()
+                    val newTimestamp = selectedDate.atTime(originalTime).atZone(ZoneId.systemDefault()).toInstant()
                     onSave(
                         transaction.copy(
                             title = title.trim(),
@@ -144,7 +206,8 @@ fun EditTransactionBottomSheet(
                             transactionType = type,
                             categoryId = if (type == TransactionType.TRANSFER) null else selectedCategoryId,
                             accountId = selectedAccountId,
-                            toAccountId = if (type == TransactionType.TRANSFER) selectedToAccountId else null
+                            toAccountId = if (type == TransactionType.TRANSFER) selectedToAccountId else null,
+                            timestamp = newTimestamp
                         )
                     )
                 },

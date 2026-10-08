@@ -39,7 +39,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
-        buildConfigField("String", "GEMINI_MODEL", "\"gemini-1.5-flash\"")
+        // gemini-1.5-flash, затем gemini-2.0-flash — обе поочерёдно сняты Google с поддержки
+        // (эндпоинт отдаёт 404 "no longer available", подтверждено на реальном ключе). Чтобы
+        // это не повторялось при каждом следующем выпуске моделей, используем плавающий алиас
+        // "gemini-flash-lite-latest", который Google сам переключает на актуальную lite-модель
+        // того же бесплатного тира — сейчас указывает на gemini-3.5-flash-lite (CLAUDE.md §3.3).
+        buildConfigField("String", "GEMINI_MODEL", "\"gemini-flash-lite-latest\"")
         buildConfigField("String", "GEMINI_BASE_URL", "\"https://generativelanguage.googleapis.com/\"")
 
         vectorDrawables { useSupportLibrary = true }

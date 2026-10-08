@@ -1,5 +1,6 @@
 package ru.vogu.smartfinance.domain.usecase
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.first
@@ -18,6 +19,7 @@ import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.repository.ExchangeRateRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import java.math.BigDecimal
 import java.time.Instant
@@ -27,8 +29,11 @@ class ObserveDashboardSummaryUseCaseTest {
     private val accountRepository: AccountRepository = mockk()
     private val transactionRepository: TransactionRepository = mockk()
     private val categoryRepository: CategoryRepository = mockk()
+    private val exchangeRateRepository: ExchangeRateRepository = mockk()
 
-    private val useCase = ObserveDashboardSummaryUseCase(accountRepository, transactionRepository, categoryRepository)
+    private val useCase = ObserveDashboardSummaryUseCase(
+        accountRepository, transactionRepository, categoryRepository, exchangeRateRepository
+    )
 
     private fun account(id: Long, balance: BigDecimal, currency: String) = Account(
         id = id,
@@ -79,16 +84,17 @@ class ObserveDashboardSummaryUseCaseTest {
     )
 
     @Test
-    fun `total balance sums only base-currency accounts`() = runTest {
+    fun `total balance converts non-base-currency accounts by real rate`() = runTest {
         every { accountRepository.observeActive() } returns flowOf(
             listOf(account(1L, BigDecimal("1000"), "RUB"), account(2L, BigDecimal("500"), "RUB"), account(3L, BigDecimal("300"), "USD"))
         )
         every { transactionRepository.observeByDateRange(any(), any()) } returns flowOf(emptyList())
         every { categoryRepository.observeBudgeted() } returns flowOf(emptyList())
+        coEvery { exchangeRateRepository.convert(BigDecimal("300"), "USD", "RUB") } returns BigDecimal("28500")
 
         val summary = useCase().first()
 
-        assertEquals(BigDecimal("1500"), summary.totalBalance)
+        assertEquals(BigDecimal("30000"), summary.totalBalance)
         assertEquals("RUB", summary.baseCurrency)
     }
 

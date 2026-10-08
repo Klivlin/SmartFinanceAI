@@ -34,16 +34,20 @@ class ScannerViewModel @Inject constructor(
     val effect: Flow<ScannerEffect> = _effect.receiveAsFlow()
 
     /**
-     * Последнее НЕудачно разобранное значение QR. Разбор QR полностью локальный и
-     * детерминированный (см. [ru.vogu.smartfinance.data.parser.FiscalQrParser]), поэтому
-     * повторный разбор того же значения гарантированно даст ту же ошибку — не спамим
-     * пользователя одинаковыми сообщениями, пока в кадре остаётся один и тот же QR.
+     * Последнее значение QR, для которого весь путь (QR + OCR) закончился ошибкой. Разбор QR
+     * полностью локальный и детерминированный (см. [ru.vogu.smartfinance.data.parser.FiscalQrParser]),
+     * а OCR/Gemini для того же кадра с высокой вероятностью повторит тот же результат — не
+     * спамим пользователя одинаковыми сообщениями и повторными сетевыми вызовами, пока в кадре
+     * остаётся один и тот же QR.
      */
     private var lastFailedQrValue: String? = null
 
     fun onIntent(intent: ScannerIntent) {
         when (intent) {
-            is ScannerIntent.BarcodeDetected -> onBarcodeDetected(intent.rawValue)
+            ScannerIntent.ReceiptCaptureStarted -> _state.update {
+                it.copy(isProcessing = true, statusHint = "Обрабатываем чек…")
+            }
+            is ScannerIntent.ReceiptScanned -> onReceiptScanned(intent.qrRawValue, intent.ocrLines)
             is ScannerIntent.PhotoRecognized -> onPhotoRecognized(intent.lines)
             ScannerIntent.PhotoCaptureFailed -> _state.update {
                 it.copy(isProcessing = false, errorMessage = "Не удалось сделать фото. Попробуйте ещё раз.")
@@ -56,15 +60,17 @@ class ScannerViewModel @Inject constructor(
         }
     }
 
-    private fun onBarcodeDetected(rawValue: String) {
-        if (_state.value.isProcessing || rawValue == lastFailedQrValue) return
+    private fun onReceiptScanned(qrRawValue: String, ocrLines: List<String>) {
+        // isProcessing к этому моменту уже true (см. [ScannerIntent.ReceiptCaptureStarted],
+        // отправляется экраном раньше — сразу по факту находки QR, до фото+OCR), поэтому здесь
+        // проверяем только повторную попытку того же самого QR, из-за которого уже была ошибка.
+        if (qrRawValue == lastFailedQrValue) return
 
-        _state.update { it.copy(isProcessing = true, statusHint = "Распознаём QR-код чека…") }
         viewModelScope.launch {
-            when (val result = parseReceiptUseCase.fromFiscalQr(rawValue)) {
+            when (val result = parseReceiptUseCase.fromQrAndOcr(qrRawValue, ocrLines)) {
                 is Resource.Success -> _effect.send(ScannerEffect.NavigateBack)
                 is Resource.Error -> {
-                    lastFailedQrValue = rawValue
+                    lastFailedQrValue = qrRawValue
                     _state.update {
                         it.copy(isProcessing = false, errorMessage = result.message, statusHint = DEFAULT_STATUS_HINT)
                     }

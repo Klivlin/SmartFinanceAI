@@ -1,5 +1,6 @@
 package ru.vogu.smartfinance.presentation.analytics
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +20,9 @@ import ru.vogu.smartfinance.domain.model.AnalyticsPeriod
 import ru.vogu.smartfinance.domain.model.AnalyticsSummary
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.usecase.GenerateFinancialTipsUseCase
 import ru.vogu.smartfinance.domain.usecase.GetAnalyticsSummaryUseCase
+import ru.vogu.smartfinance.domain.usecase.GetSpendingForecastUseCase
 import java.math.BigDecimal
 import java.time.LocalDate
 
@@ -27,6 +30,8 @@ import java.time.LocalDate
 class AnalyticsViewModelTest {
 
     private val getAnalyticsSummaryUseCase: GetAnalyticsSummaryUseCase = mockk()
+    private val getSpendingForecastUseCase: GetSpendingForecastUseCase = mockk()
+    private val generateFinancialTipsUseCase: GenerateFinancialTipsUseCase = mockk()
     private val categoryRepository: CategoryRepository = mockk()
     private val accountRepository: AccountRepository = mockk()
 
@@ -51,8 +56,16 @@ class AnalyticsViewModelTest {
         every { getAnalyticsSummaryUseCase(AnalyticsPeriod.MONTH) } returns flowOf(summaryFor(AnalyticsPeriod.MONTH))
         every { getAnalyticsSummaryUseCase(AnalyticsPeriod.WEEK) } returns flowOf(summaryFor(AnalyticsPeriod.WEEK))
         every { getAnalyticsSummaryUseCase(AnalyticsPeriod.YEAR) } returns flowOf(summaryFor(AnalyticsPeriod.YEAR))
+        coEvery { getSpendingForecastUseCase() } returns emptyList()
+        coEvery { generateFinancialTipsUseCase(baseCurrency = any()) } returns emptyList()
 
-        viewModel = AnalyticsViewModel(getAnalyticsSummaryUseCase, categoryRepository, accountRepository)
+        viewModel = AnalyticsViewModel(
+            getAnalyticsSummaryUseCase = getAnalyticsSummaryUseCase,
+            getSpendingForecastUseCase = getSpendingForecastUseCase,
+            generateFinancialTipsUseCase = generateFinancialTipsUseCase,
+            categoryRepository = categoryRepository,
+            accountRepository = accountRepository
+        )
     }
 
     @After

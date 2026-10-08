@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import ru.vogu.smartfinance.core.database.entity.AccountEntity
@@ -46,4 +47,21 @@ interface AccountDao {
 
     @Query("UPDATE accounts SET is_archived = 1 WHERE id = :accountId")
     suspend fun archive(accountId: Long)
+
+    /** Счёт, свёрнуто отображаемый на главном Chat-экране (CLAUDE.md §5.1). */
+    @Query("SELECT * FROM accounts WHERE is_primary = 1 AND is_archived = 0 LIMIT 1")
+    fun observePrimary(): Flow<AccountEntity?>
+
+    @Query("UPDATE accounts SET is_primary = 0 WHERE is_primary = 1")
+    suspend fun clearPrimary()
+
+    @Query("UPDATE accounts SET is_primary = 1 WHERE id = :accountId")
+    suspend fun markPrimary(accountId: Long)
+
+    /** Атомарно переносит флаг "основной" на [accountId] — инвариант "не более одного основного счёта". */
+    @Transaction
+    suspend fun setPrimary(accountId: Long) {
+        clearPrimary()
+        markPrimary(accountId)
+    }
 }

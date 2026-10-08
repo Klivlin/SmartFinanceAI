@@ -11,6 +11,8 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import ru.vogu.smartfinance.BuildConfig
+import ru.vogu.smartfinance.core.network.CryptoExchangeRateApi
+import ru.vogu.smartfinance.core.network.FiatExchangeRateApi
 import ru.vogu.smartfinance.core.network.GeminiApi
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
@@ -59,4 +61,36 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideGeminiApi(retrofit: Retrofit): GeminiApi = retrofit.create(GeminiApi::class.java)
+
+    /** Отдельный Retrofit с другим base URL — курсы фиатных валют (CLAUDE.md §2.1), см. [FiatRatesRetrofit]. */
+    @Provides
+    @Singleton
+    @FiatRatesRetrofit
+    fun provideFiatRatesRetrofit(okHttpClient: OkHttpClient, json: Json): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://open.er-api.com/")
+            .client(okHttpClient)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+
+    /** Отдельный Retrofit с другим base URL — курсы криптовалют (CLAUDE.md §2.1), см. [CryptoRatesRetrofit]. */
+    @Provides
+    @Singleton
+    @CryptoRatesRetrofit
+    fun provideCryptoRatesRetrofit(okHttpClient: OkHttpClient, json: Json): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://api.coingecko.com/")
+            .client(okHttpClient)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideFiatExchangeRateApi(@FiatRatesRetrofit retrofit: Retrofit): FiatExchangeRateApi =
+        retrofit.create(FiatExchangeRateApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideCryptoExchangeRateApi(@CryptoRatesRetrofit retrofit: Retrofit): CryptoExchangeRateApi =
+        retrofit.create(CryptoExchangeRateApi::class.java)
 }

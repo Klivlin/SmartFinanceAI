@@ -23,4 +23,14 @@ interface CategoryRepository {
      * пользователя, а не часть идентичности категории, на которую ссылается промпт Gemini).
      */
     suspend fun updateCategoryBudget(categoryId: Long, monthlyBudget: BigDecimal?)
+
+    /**
+     * Меняет только иконку/цвет — в отличие от [updateCategory] разрешено и для системных
+     * категорий (визуальная персонализация не затрагивает id/имя, на которые ссылается
+     * промпт Gemini — CLAUDE.md §3.3/§5.2).
+     */
+    suspend fun updateCategoryAppearance(categoryId: Long, iconName: String, colorHex: String)
+
+    /** Меняет позицию в списке — разрешено и для системных, и для собственных категорий. */
+    suspend fun updateCategorySortOrder(categoryId: Long, sortOrder: Int)
 }

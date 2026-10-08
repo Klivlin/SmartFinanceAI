@@ -58,4 +58,21 @@ interface CategoryDao {
      */
     @Query("UPDATE categories SET monthly_budget = :monthlyBudget WHERE id = :categoryId")
     suspend fun updateBudget(categoryId: Long, monthlyBudget: BigDecimal?)
+
+    /**
+     * Отдельный от [update] метод, как и [updateBudget]: разрешает менять иконку/цвет даже
+     * у системных категорий (id 1..9). В отличие от имени, они не влияют на промпт Gemini
+     * (CLAUDE.md §3.3 ссылается на категории по id/имени, не по цвету/иконке) — это чисто
+     * визуальная персонализация (CLAUDE.md §5.2 "Управление категориями").
+     */
+    @Query("UPDATE categories SET icon_name = :iconName, color_hex = :colorHex WHERE id = :categoryId")
+    suspend fun updateAppearance(categoryId: Long, iconName: String, colorHex: String)
+
+    /**
+     * Отдельный от [update] метод, как [updateBudget]/[updateAppearance]: порядок в списке —
+     * персональная настройка, разрешена и для системных категорий, и для собственных
+     * (CLAUDE.md §5.2 "Управление категориями").
+     */
+    @Query("UPDATE categories SET sort_order = :sortOrder WHERE id = :categoryId")
+    suspend fun updateSortOrder(categoryId: Long, sortOrder: Int)
 }

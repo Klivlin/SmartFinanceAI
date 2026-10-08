@@ -1,11 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Плейсхолдер-монограмма "S". Финальная иконка должна быть заменена дизайнером/через Image Asset Studio. -->
+<!--
+    Логотип приложения — кольцо + ромб, тот же мотив, что и AppLogo() в
+    core/ui/components/PremiumSurfaces.kt (используется как центрированный фоновый знак на
+    каждом экране) и TitleRule() (разделитель под заголовками экранов) — единственный
+    повторяющийся графический акцент интерфейса, поэтому и лёг в основу иконки приложения,
+    а не отдельная, нигде больше не встречающаяся картинка. Цвета — реальная палитра приложения
+    (neutral_900/neutral_300, core/ui/theme/Color.kt), а не случайный синий, как раньше.
+    Вписан в безопасную зону адаптивной иконки (круг радиусом 30 из 108, центр 54,54).
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Кольцо -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M39,34 C39,28 44,24 54,24 C62,24 68,27 71,32 L63,38 C61,35 58,33 54,33 C50,33 47,34.5 47,37 C47,40 51,41 56,42.5 C65,45 72,49 72,58 C72,67 65,73 54,73 C44,73 37,68 34,61 L42.5,55.5 C44.5,60 48.5,64 54.5,64 C59.5,64 63,62 63,58.5 C63,55 58.5,53.5 53,52 C44.5,49.5 39,45.5 39,34 Z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#111111"
+        android:strokeWidth="5"
+        android:pathData="M84,54 A30,30 0 1,1 83.99,53.5" />
+    <!-- Ромб в центре — тот же акцент, что и в AppLogo()/TitleRule() -->
+    <path
+        android:fillColor="#BEB8AD"
+        android:pathData="M54,44 L64,54 L54,64 L44,54 Z" />
 </vector>

@@ -13,12 +13,27 @@ import java.time.Instant
 interface TransactionRepository {
 
     fun observeRecent(limit: Int = 50): Flow<List<Transaction>>
+
+    /** Лента чата — порядок по моменту ввода, а не по дате самой операции (см. DAO doc). */
+    fun observeRecentByEntryOrder(limit: Int = 50): Flow<List<Transaction>>
     fun observeByAccount(accountId: Long): Flow<List<Transaction>>
+
+    /** Все операции конкретной категории (для экрана "Категории" — CLAUDE.md §5.2). */
+    fun observeByCategory(categoryId: Long): Flow<List<Transaction>>
     fun observeByDateRange(fromInclusive: Instant, toExclusive: Instant): Flow<List<Transaction>>
+
+    /** Для ежедневного напоминания "внести расходы" — CLAUDE.md §2.4/§5.1. */
+    suspend fun countByDateRange(fromInclusive: Instant, toExclusive: Instant): Int
     suspend fun getById(id: Long): Transaction?
+
+    /** Полная история операций в хронологическом порядке — экспорт в CSV (CLAUDE.md §2.7/§5.2). */
+    suspend fun getAllForExport(): List<Transaction>
 
     /** Сумма расходов по категории за период — Pie Chart аналитики и прогресс-бары бюджета (CLAUDE.md §2.5/§5.2). */
     fun observeSpendingByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>>
+
+    /** Сумма доходов по категории за период — вкладка "Доходы" на экране "Категории" (CLAUDE.md §5.2). */
+    fun observeIncomeByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategoryAmount>>
 
     /** Динамика расходов по дням за период — график в аналитике (CLAUDE.md §5.2). */
     fun observeDailySpending(fromInclusive: Instant, toExclusive: Instant): Flow<List<DailySpendingPoint>>
@@ -40,6 +55,7 @@ interface TransactionRepository {
         rawInputText: String? = null,
         originalCurrency: String? = null,
         transferFeeAmount: BigDecimal? = null,
+        toAmount: BigDecimal? = null,
         recurringRuleId: Long? = null,
         splitItems: List<SplitItem> = emptyList()
     ): Transaction

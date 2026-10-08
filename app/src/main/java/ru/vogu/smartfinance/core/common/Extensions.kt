@@ -1,5 +1,6 @@
 package ru.vogu.smartfinance.core.common
 
+import ru.vogu.smartfinance.domain.model.CryptoAsset
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
@@ -11,8 +12,18 @@ import java.util.Locale
 /** Денежное округление до 2 знаков (копейки/центы), банковское округление (HALF_EVEN) — стандарт для финансов. */
 fun BigDecimal.toMoneyScale(): BigDecimal = setScale(2, RoundingMode.HALF_EVEN)
 
-/** Форматирует сумму в формате "1 234,56 ₽" (локаль ru-RU) для отображения в UI. */
+/**
+ * Форматирует сумму в формате "1 234,56 ₽" (локаль ru-RU) для отображения в UI. Для крипто-
+ * тикеров (CLAUDE.md §2.1) — не ISO 4217, [java.util.Currency.getInstance] выбросил бы
+ * исключение — форматируем вручную с точностью до 8 знаков (без хвостовых нулей, минимум 2).
+ */
 fun BigDecimal.formatAsCurrency(currencyCode: String, locale: Locale = Locale("ru", "RU")): String {
+    if (CryptoAsset.fromCode(currencyCode) != null) {
+        val format = NumberFormat.getNumberInstance(locale)
+        format.maximumFractionDigits = 8
+        format.minimumFractionDigits = 2
+        return "${format.format(this)} ${currencyCode.uppercase()}"
+    }
     val format = NumberFormat.getCurrencyInstance(locale)
     format.currency = java.util.Currency.getInstance(currencyCode)
     format.maximumFractionDigits = 2
@@ -43,3 +54,10 @@ fun Instant.startOfNextDay(zoneId: ZoneId = ZoneId.systemDefault()): Instant =
 
 /** Нормализация ключевого слова для Tier 2 семантического кэша — CLAUDE.md §3.2. */
 fun String.normalizeAsAliasKeyword(): String = this.trim().lowercase(Locale("ru", "RU"))
+
+/** Разбивает уже нормализованную строку на отдельные слова — для поэлементного сопоставления категорий. */
+fun String.tokenizeWords(): List<String> = split(Regex("[^a-zа-яё0-9]+")).filter { it.isNotBlank() }
+
+/** Общая "основа" слова (первые [length] символов) — грубая, но достаточная замена стеммингу для
+ * сопоставления русских словоформ ("подписка"/"подписки") без словаря окончаний. */
+fun String.stem(length: Int = 5): String = if (this.length <= length) this else this.substring(0, length)

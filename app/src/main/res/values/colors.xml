@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Плейсхолдер для иконки запуска; полная цветовая схема M3 — в Шаге 4 (core/ui/theme/Color.kt). -->
-    <color name="ic_launcher_background">#1B5E20</color>
+    <!-- Кремовый фон приложения (neutral_050 — см. core/ui/theme/Color.kt) — реальный цвет
+         палитры, а не произвольный синий, который был здесь раньше и не совпадал ни с одним
+         цветом темы (md_theme_primary на самом деле neutral_900, тёмно-графитовый, не синий). -->
+    <color name="ic_launcher_background">#F6F4EE</color>
 </resources>

@@ -73,7 +73,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
-import com.google.mlkit.vision.text.TextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.Executor
@@ -81,11 +81,13 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
 /**
- * Экран сканера чеков — CLAUDE.md §4/§5.2. Одновременно слушает кадры на QR-код (ML Kit
- * Barcode Scanning, непрерывно через [ImageAnalysis]) и предоставляет кнопку "Сфотографировать
- * чек" для OCR-пути (ML Kit Text Recognition через [ImageCapture]) — оба пути доступны на одном
- * экране без переключения режимов, что и предполагает §4 (QR — предпочтительный, полностью
- * офлайн-путь; фото — запасной, для чеков без читаемого QR).
+ * Экран сканера чеков — CLAUDE.md §4/§5.2. Непрерывно слушает кадры на QR-код (ML Kit Barcode
+ * Scanning через [ImageAnalysis]); как только QR найден, сканер сам фотографирует тот же кадр
+ * и прогоняет его через OCR ([ImageCapture] + ML Kit Text Recognition), чтобы получить разбивку
+ * чека по позициям — см. [analyzeFrameForBarcode] и [ru.vogu.smartfinance.domain.usecase.ParseReceiptUseCase.fromQrAndOcr].
+ * Один QR в кадре — один авто-снимок (флаг `isCapturingReceipt`), а не поток дублей. Кнопка
+ * "Сфотографировать чек" остаётся отдельно на случай, если на чеке вообще нет читаемого QR
+ * (плохая печать, обрезан край) — тогда работает чистый OCR-путь без фискальных данных.
  *
  * ВАЖНО (проверено при реализации Шага 5): используемая версия ML Kit Text Recognition v2
  * (`com.google.mlkit:text-recognition:16.0.1`, "Latin"-модель — единственная поддерживаемая
@@ -142,7 +144,7 @@ fun ScannerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Сканировать чек") },
+                title = { Text("СКАНЕР ЧЕКА", style = MaterialTheme.typography.headlineMedium) },
                 navigationIcon = {
                     IconButton(onClick = { viewModel.onIntent(ScannerIntent.CloseRequested) }) {
                         Icon(Icons.Filled.Close, contentDescription = "Закрыть")
@@ -161,7 +163,10 @@ fun ScannerScreen(
                 ScannerCameraContent(
                     statusHint = state.statusHint,
                     isProcessing = state.isProcessing,
-                    onBarcodeDetected = { viewModel.onIntent(ScannerIntent.BarcodeDetected(it)) },
+                    onQrDetected = { viewModel.onIntent(ScannerIntent.ReceiptCaptureStarted) },
+                    onReceiptScanned = { qrRawValue, ocrLines ->
+                        viewModel.onIntent(ScannerIntent.ReceiptScanned(qrRawValue, ocrLines))
+                    },
                     onPhotoRecognized = { viewModel.onIntent(ScannerIntent.PhotoRecognized(it)) },
                     onPhotoCaptureFailed = { viewModel.onIntent(ScannerIntent.PhotoCaptureFailed) },
                     modifier = Modifier.fillMaxSize()
@@ -180,7 +185,8 @@ fun ScannerScreen(
 private fun ScannerCameraContent(
     statusHint: String,
     isProcessing: Boolean,
-    onBarcodeDetected: (String) -> Unit,
+    onQrDetected: () -> Unit,
+    onReceiptScanned: (qrRawValue: String, ocrLines: List<String>) -> Unit,
     onPhotoRecognized: (List<String>) -> Unit,
     onPhotoCaptureFailed: () -> Unit,
     modifier: Modifier = Modifier
@@ -203,7 +209,13 @@ private fun ScannerCameraContent(
     // один раз), а isProcessing/колбэки меняются при каждой рекомпозиции — без rememberUpdatedState
     // аналайзер держал бы значения ПЕРВОЙ композиции и никогда не увидел бы актуальный isProcessing.
     val isProcessingState = rememberUpdatedState(isProcessing)
-    val onBarcodeDetectedState = rememberUpdatedState(onBarcodeDetected)
+    val onQrDetectedState = rememberUpdatedState(onQrDetected)
+    val onReceiptScannedState = rememberUpdatedState(onReceiptScanned)
+    // Доп. защита от повторного авто-снимка, пока первый ещё летит к Gemini: isProcessing из
+    // ViewModel обновляется только после того, как корутина в ViewModel реально стартует, а
+    // кадры с камеры идут гораздо чаще — без этого флага один и тот же QR в кадре успевал
+    // запустить несколько параллельных ImageCapture.takePicture() до первого пересчёта состояния.
+    val isCapturingReceipt = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -222,7 +234,41 @@ private fun ScannerCameraContent(
             .build()
             .also { useCase ->
                 useCase.setAnalyzer(cameraExecutor) { imageProxy ->
-                    analyzeFrameForBarcode(imageProxy, barcodeScanner, isProcessingState, onBarcodeDetectedState)
+                    analyzeFrameForBarcode(
+                        imageProxy = imageProxy,
+                        barcodeScanner = barcodeScanner,
+                        isProcessing = isProcessingState,
+                        isCapturingReceipt = isCapturingReceipt,
+                        onQrFound = { qrRawValue ->
+                            // Мгновенная обратная связь ДО фото+OCR (см. doc-комментарий
+                            // ScannerIntent.ReceiptCaptureStarted) — иначе экран несколько
+                            // секунд выглядит так, будто QR вообще не распознаётся.
+                            onQrDetectedState.value()
+                            val capture = imageCapture
+                            if (capture == null) {
+                                isCapturingReceipt.set(false)
+                                onReceiptScannedState.value(qrRawValue, emptyList())
+                                return@analyzeFrameForBarcode
+                            }
+                            // Тот же кадр, где нашёлся QR, тут же фотографируем и прогоняем через
+                            // OCR — CLAUDE.md §4: так пользователь получает разбивку по позициям
+                            // чека вместо одной обезличенной "Покупка по чеку" (см. doc-комментарий
+                            // ParseReceiptUseCase.fromQrAndOcr), не нажимая отдельную кнопку.
+                            capturePhotoForOcr(
+                                imageCapture = capture,
+                                executor = cameraExecutor,
+                                textRecognizer = textRecognizer,
+                                onPhotoRecognized = { lines ->
+                                    isCapturingReceipt.set(false)
+                                    onReceiptScannedState.value(qrRawValue, lines)
+                                },
+                                onPhotoCaptureFailed = {
+                                    isCapturingReceipt.set(false)
+                                    onReceiptScannedState.value(qrRawValue, emptyList())
+                                }
+                            )
+                        }
+                    )
                 }
             }
 
@@ -323,10 +369,11 @@ private fun analyzeFrameForBarcode(
     imageProxy: ImageProxy,
     barcodeScanner: BarcodeScanner,
     isProcessing: State<Boolean>,
-    onBarcodeDetected: State<(String) -> Unit>
+    isCapturingReceipt: java.util.concurrent.atomic.AtomicBoolean,
+    onQrFound: (String) -> Unit
 ) {
     val mediaImage = imageProxy.image
-    if (isProcessing.value || mediaImage == null) {
+    if (isProcessing.value || isCapturingReceipt.get() || mediaImage == null) {
         imageProxy.close()
         return
     }
@@ -335,8 +382,8 @@ private fun analyzeFrameForBarcode(
     barcodeScanner.process(inputImage)
         .addOnSuccessListener { barcodes ->
             val rawValue = barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
-            if (rawValue != null) {
-                onBarcodeDetected.value(rawValue)
+            if (rawValue != null && isCapturingReceipt.compareAndSet(false, true)) {
+                onQrFound(rawValue)
             }
         }
         .addOnCompleteListener {

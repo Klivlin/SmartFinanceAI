@@ -27,6 +27,7 @@ object Constants {
 
     /** WorkManager tags. */
     const val WORK_TAG_RECURRING_CHECK = "recurring_payments_check"
+    const val WORK_TAG_EXPENSE_REMINDER = "expense_reminder_daily"
 }
 
 /**
@@ -38,12 +39,16 @@ object Constants {
  */
 object DefaultCategories {
 
+    // Приглушённая, "земляная" палитра вместо ярких Material-цветов — CLAUDE.md §6, единый
+    // стиль с остальным монохромным интерфейсом (см. core/ui/theme/Color.kt). Яркий rainbow
+    // (оранжевый/синий/фиолетовый/жёлтый) визуально "кричит" на тёплом нейтральном фоне —
+    // здесь те же роли (еда/транспорт/кафе...), но приглушённые оттенки той же теплоты.
     val seed: List<CategoryEntity> = listOf(
         CategoryEntity(
             id = 1,
             name = "Еда",
             iconName = "restaurant",
-            colorHex = "#FF7043",
+            colorHex = "#C17A56",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 1
@@ -52,7 +57,7 @@ object DefaultCategories {
             id = 2,
             name = "Транспорт",
             iconName = "directions_car",
-            colorHex = "#42A5F5",
+            colorHex = "#6D8CA0",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 2
@@ -61,7 +66,7 @@ object DefaultCategories {
             id = 3,
             name = "Кафе",
             iconName = "local_cafe",
-            colorHex = "#AB47BC",
+            colorHex = "#A67F94",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 3
@@ -70,7 +75,7 @@ object DefaultCategories {
             id = 4,
             name = "Коммунальные платежи",
             iconName = "bolt",
-            colorHex = "#FFCA28",
+            colorHex = "#BFA05A",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 4
@@ -79,7 +84,7 @@ object DefaultCategories {
             id = 5,
             name = "Развлечения",
             iconName = "theater_comedy",
-            colorHex = "#EC407A",
+            colorHex = "#B97C77",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 5
@@ -88,7 +93,7 @@ object DefaultCategories {
             id = 6,
             name = "Здоровье",
             iconName = "favorite",
-            colorHex = "#66BB6A",
+            colorHex = "#7C9473",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 6
@@ -97,7 +102,7 @@ object DefaultCategories {
             id = 7,
             name = "Переводы",
             iconName = "swap_horiz",
-            colorHex = "#78909C",
+            colorHex = "#8A8378",
             isIncomeCategory = false,
             isSystem = true,
             sortOrder = 7
@@ -106,7 +111,7 @@ object DefaultCategories {
             id = 8,
             name = "Доход",
             iconName = "payments",
-            colorHex = "#26A69A",
+            colorHex = "#6F8F5C",
             isIncomeCategory = true,
             isSystem = true,
             sortOrder = 8

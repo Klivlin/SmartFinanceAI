@@ -75,7 +75,7 @@ class AccountsViewModelTest {
         )
 
         assertEquals("Введите корректный начальный баланс.", viewModel.state.value.errorMessage)
-        coVerify(exactly = 0) { manageAccountUseCase.createAccount(any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { manageAccountUseCase.createAccount(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -85,7 +85,8 @@ class AccountsViewModelTest {
         coEvery {
             manageAccountUseCase.createAccount(
                 name = "Копилка", type = AccountType.SAVINGS, currency = "RUB",
-                initialBalance = BigDecimal("500"), creditLimit = null, gracePeriodDays = null, statementDay = null
+                initialBalance = BigDecimal("500"), creditLimit = null, gracePeriodDays = null, statementDay = null,
+                interestRatePercent = null
             )
         } returns Resource.Success(savingsAccount)
 

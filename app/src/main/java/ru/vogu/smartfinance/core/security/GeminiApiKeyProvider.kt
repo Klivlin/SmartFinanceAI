@@ -48,4 +48,7 @@ class GeminiApiKeyProvider @Inject constructor(
     }
 
     fun hasAnyApiKey(): Boolean = getApiKey().isNotBlank()
+
+    /** Введён ли пользователем свой ключ в настройках, а не просто используется ключ приложения по умолчанию. */
+    fun hasUserApiKey(): Boolean = !securePrefs.getString(Constants.KEYSTORE_GEMINI_USER_API_KEY, null).isNullOrBlank()
 }

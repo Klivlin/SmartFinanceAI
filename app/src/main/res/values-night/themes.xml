@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема — windowBackground совпадает с md_theme_dark_background (#000000). -->
+    <style name="Theme.SmartFinanceAI" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#000000</item>
+    </style>
+</resources>

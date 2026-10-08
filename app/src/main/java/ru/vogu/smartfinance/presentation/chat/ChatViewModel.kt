@@ -9,22 +9,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ru.vogu.smartfinance.core.common.Resource
+import ru.vogu.smartfinance.core.common.toLocalDate
 import ru.vogu.smartfinance.domain.model.Account
 import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.repository.ChatHistoryRepository
+import ru.vogu.smartfinance.domain.repository.OnboardingRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import ru.vogu.smartfinance.domain.usecase.ObserveDashboardSummaryUseCase
 import ru.vogu.smartfinance.domain.usecase.ProcessNliInputUseCase
 import ru.vogu.smartfinance.domain.usecase.UndoTransactionUseCase
 import ru.vogu.smartfinance.domain.usecase.UpdateTransactionUseCase
 import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 import javax.inject.Inject
 
 private const val CHAT_HISTORY_LIMIT = 100
@@ -56,7 +64,9 @@ class ChatViewModel @Inject constructor(
     private val observeDashboardSummaryUseCase: ObserveDashboardSummaryUseCase,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
-    private val accountRepository: AccountRepository
+    private val accountRepository: AccountRepository,
+    private val chatHistoryRepository: ChatHistoryRepository,
+    private val onboardingRepository: OnboardingRepository
 ) : ViewModel() {
 
     private val uiState = MutableStateFlow(ChatState())
@@ -72,20 +82,32 @@ class ChatViewModel @Inject constructor(
 
     val state: StateFlow<ChatState> = combine(
         uiState,
-        transactionRepository.observeRecent(CHAT_HISTORY_LIMIT),
+        transactionRepository.observeRecentByEntryOrder(CHAT_HISTORY_LIMIT),
         referenceData,
-        localOverlay
-    ) { base, transactions, ref, overlay ->
+        localOverlay,
+        chatHistoryRepository.clearedAt
+    ) { base, transactions, ref, overlay, clearedAt ->
+        // "Очистить чат" (CLAUDE.md §5.1) не трогает Room — просто прячет из ленты всё, что
+        // было СОЗДАНО до момента очистки; сами операции остаются доступны в "Категориях".
+        // Фильтр по createdAt (момент ввода), а не по timestamp (дата самой операции) — иначе
+        // операция "вчера такси 500", введённая ПОСЛЕ очистки чата, имела бы timestamp РАНЬШЕ
+        // clearedAt и навсегда пропадала бы из чата, хотя создана только что.
+        val visibleTransactions = if (clearedAt == null) {
+            transactions
+        } else {
+            transactions.filter { it.createdAt.isAfter(clearedAt) }
+        }
         base.copy(
             messages = buildMessages(
-                transactions = transactions,
+                transactions = visibleTransactions,
                 categoriesById = ref.categories.associateBy { it.id },
                 accountsById = ref.accounts.associateBy { it.id },
                 confirmedIds = overlay.confirmedTransactionIds,
                 pending = overlay.pendingUserMessage
             ),
             editingCategories = ref.categories,
-            editingAccounts = ref.accounts
+            editingAccounts = ref.accounts,
+            primaryAccount = ref.accounts.firstOrNull { it.isPrimary } ?: ref.accounts.firstOrNull()
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatState())
 
@@ -93,6 +115,12 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             observeDashboardSummaryUseCase().collect { summary ->
                 uiState.update { it.copy(dashboard = summary) }
+            }
+        }
+        viewModelScope.launch {
+            val alreadyPrompted = onboardingRepository.isInitialBalancePrompted.first()
+            if (!alreadyPrompted) {
+                uiState.update { it.copy(showInitialBalanceDialog = true) }
             }
         }
     }
@@ -103,6 +131,7 @@ class ChatViewModel @Inject constructor(
             ChatIntent.SendMessage -> sendMessage()
             is ChatIntent.ConfirmTransaction -> confirmTransaction(intent.transactionId)
             is ChatIntent.UndoTransaction -> undoTransaction(intent.transactionId)
+            is ChatIntent.RestoreTransaction -> restoreTransaction(intent.transaction)
             is ChatIntent.EditTransactionRequested -> requestEdit(intent.transactionId)
             ChatIntent.DismissEdit -> uiState.update { it.copy(editingTransaction = null) }
             is ChatIntent.SaveEditedTransaction -> saveEdited(intent.transaction)
@@ -114,7 +143,38 @@ class ChatViewModel @Inject constructor(
             ChatIntent.CameraClicked -> viewModelScope.launch { _effect.send(ChatEffect.NavigateToScanner) }
             ChatIntent.ErrorMessageShown -> uiState.update { it.copy(errorMessage = null) }
             ChatIntent.HeaderExpandToggled -> uiState.update { it.copy(isHeaderExpanded = !it.isHeaderExpanded) }
+            ChatIntent.ClearChatRequested -> uiState.update { it.copy(isClearChatDialogVisible = true) }
+            ChatIntent.ClearChatDismissed -> uiState.update { it.copy(isClearChatDialogVisible = false) }
+            ChatIntent.ClearChatConfirmed -> clearChat()
+            is ChatIntent.InitialBalanceConfirmed -> confirmInitialBalance(intent.amountText)
+            ChatIntent.InitialBalanceSkipped -> dismissInitialBalanceDialog()
         }
+    }
+
+    private fun confirmInitialBalance(amountText: String) {
+        val amount = amountText.trim().replace(',', '.').toBigDecimalOrNull()
+        if (amount == null) {
+            uiState.update { it.copy(errorMessage = "Введите корректную сумму баланса.") }
+            return
+        }
+        viewModelScope.launch {
+            val account = accountRepository.findBestMatch(null)
+            accountRepository.adjustBalance(account.id, amount - account.balance)
+            onboardingRepository.markInitialBalancePrompted()
+            uiState.update { it.copy(showInitialBalanceDialog = false) }
+        }
+    }
+
+    private fun dismissInitialBalanceDialog() {
+        viewModelScope.launch {
+            onboardingRepository.markInitialBalancePrompted()
+            uiState.update { it.copy(showInitialBalanceDialog = false) }
+        }
+    }
+
+    private fun clearChat() {
+        uiState.update { it.copy(isClearChatDialogVisible = false) }
+        viewModelScope.launch { chatHistoryRepository.clearChat() }
     }
 
     private fun onVoiceResult(recognizedText: String) {
@@ -146,6 +206,19 @@ class ChatViewModel @Inject constructor(
                     // единственным источником правды, локальное эхо больше не нужно.
                     localOverlay.update { it.copy(pendingUserMessage = null) }
                     uiState.update { it.copy(isSending = false) }
+                    // Операция "задним числом" ("вчера такси 500") сортируется по РЕАЛЬНОЙ
+                    // дате среди всех сообщений ленты — если в чате уже есть более свежие
+                    // записи за сегодня, новая карточка попадёт выше них, а не в самый низ, и
+                    // ScrollToBottom её не покажет. Без явного подтверждения это выглядит так,
+                    // будто фраза "не распозналась", хотя операция уже создана — см. историю
+                    // чата или экран "Категории".
+                    val backdated = result.data.filter { it.timestamp.toLocalDate() != LocalDate.now() }
+                    if (backdated.isNotEmpty()) {
+                        val dateLabel = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)
+                            .withLocale(Locale("ru", "RU"))
+                            .format(backdated.first().timestamp.toLocalDate())
+                        _effect.send(ChatEffect.ShowToast("Добавлено датой: $dateLabel — смотрите выше в ленте"))
+                    }
                     _effect.send(ChatEffect.ScrollToBottom)
                 }
                 is Resource.Error -> {
@@ -163,14 +236,42 @@ class ChatViewModel @Inject constructor(
 
     private fun undoTransaction(transactionId: Long) {
         viewModelScope.launch {
+            // Undo стирает запись целиком (см. doc-комментарий UndoTransactionUseCase) — читаем
+            // её ДО удаления, иначе кнопке "Отменить" на уведомлении будет нечего восстанавливать.
+            val transactionToDelete = transactionRepository.getById(transactionId)
             when (val result = undoTransactionUseCase(transactionId)) {
                 is Resource.Error -> uiState.update { it.copy(errorMessage = result.message) }
                 is Resource.Success -> {
                     localOverlay.update { it.copy(confirmedTransactionIds = it.confirmedTransactionIds - transactionId) }
-                    _effect.send(ChatEffect.ShowToast("Операция отменена"))
+                    if (transactionToDelete != null) {
+                        _effect.send(ChatEffect.TransactionDeleted(transactionToDelete))
+                    }
                 }
                 Resource.Loading -> Unit
             }
+        }
+    }
+
+    private fun restoreTransaction(transaction: Transaction) {
+        viewModelScope.launch {
+            transactionRepository.createTransaction(
+                accountId = transaction.accountId,
+                toAccountId = transaction.toAccountId,
+                categoryId = transaction.categoryId,
+                amount = transaction.amount,
+                transactionType = transaction.transactionType,
+                title = transaction.title,
+                notes = transaction.notes,
+                timestamp = transaction.timestamp,
+                source = transaction.source,
+                rawInputText = transaction.rawInputText,
+                originalCurrency = transaction.originalCurrency,
+                transferFeeAmount = transaction.transferFeeAmount,
+                toAmount = transaction.toAmount,
+                recurringRuleId = transaction.recurringRuleId,
+                splitItems = transaction.splitItems
+            )
+            _effect.send(ChatEffect.ScrollToBottom)
         }
     }
 
@@ -224,7 +325,8 @@ class ChatViewModel @Inject constructor(
                 category = tx.categoryId?.let { categoriesById[it] },
                 account = accountsById[tx.accountId],
                 toAccount = tx.toAccountId?.let { accountsById[it] },
-                isConfirmed = tx.id in confirmedIds
+                isConfirmed = tx.id in confirmedIds,
+                splitItemCategories = tx.splitItems.map { it.categoryId?.let { id -> categoriesById[id] } }
             )
         }
 

@@ -50,4 +50,14 @@ class CategoryRepositoryImpl @Inject constructor(
         }
         categoryDao.updateBudget(categoryId, monthlyBudget)
     }
+
+    override suspend fun updateCategoryAppearance(categoryId: Long, iconName: String, colorHex: String) {
+        require(iconName.isNotBlank()) { "Иконка категории не может быть пустой." }
+        require(Regex("^#[0-9A-Fa-f]{6}$").matches(colorHex)) { "Цвет категории должен быть в формате #RRGGBB." }
+        categoryDao.updateAppearance(categoryId, iconName, colorHex)
+    }
+
+    override suspend fun updateCategorySortOrder(categoryId: Long, sortOrder: Int) {
+        categoryDao.updateSortOrder(categoryId, sortOrder)
+    }
 }

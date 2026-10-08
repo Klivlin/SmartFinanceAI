@@ -10,6 +10,7 @@ import ru.vogu.smartfinance.core.common.Resource
 import ru.vogu.smartfinance.core.common.normalizeAsAliasKeyword
 import ru.vogu.smartfinance.core.database.entity.TransactionSource
 import ru.vogu.smartfinance.core.database.entity.TransactionType
+import ru.vogu.smartfinance.core.network.dto.GeminiCategoryClassificationDto
 import ru.vogu.smartfinance.core.network.dto.GeminiContent
 import ru.vogu.smartfinance.core.network.dto.GeminiGenerateContentRequest
 import ru.vogu.smartfinance.core.network.dto.GeminiGenerationConfig
@@ -89,6 +90,75 @@ class GeminiClient @Inject constructor(
         } catch (e: SerializationException) {
             Resource.Error("Gemini вернул некорректный JSON, не удалось его разобрать.", e)
         }
+    }
+
+    /**
+     * Точечный вызов Tier 3 ТОЛЬКО ради категории — CLAUDE.md §3.2. Нужен, когда Tier 1
+     * (regex) уже успешно распознал сумму/название офлайн, но ни персональный кэш алиасов,
+     * ни встроенный словарь не знают это слово — типично для СВОИХ категорий пользователя
+     * ("Яндекс Плюс" должен попасть в созданную пользователем "Подписки", а не в "Другое",
+     * хотя это название нигде не могло быть захардкожено заранее). Результат немедленно
+     * учится в semantic_aliases вызывающей стороной — второй раз этот же токен не тратится.
+     */
+    suspend fun classifyCategory(title: String, categories: List<Category>): Resource<Long> {
+        val apiKey = apiKeyProvider.getApiKey()
+        if (apiKey.isBlank()) return Resource.Error("Не задан ключ Gemini API.")
+
+        val request = buildClassifyRequest(title, categories)
+
+        return try {
+            val response = geminiApi.generateContent(
+                model = BuildConfig.GEMINI_MODEL,
+                apiKey = apiKey,
+                request = request
+            )
+
+            response.promptFeedback?.blockReason?.let { reason ->
+                return Resource.Error("Gemini отклонил запрос по соображениям безопасности ($reason).")
+            }
+
+            val rawJson = response.candidates
+                ?.firstOrNull()
+                ?.content
+                ?.parts
+                ?.firstOrNull()
+                ?.text
+                ?: return Resource.Error("Gemini вернул пустой ответ.")
+
+            val dto = json.decodeFromString(GeminiCategoryClassificationDto.serializer(), rawJson)
+            if (categories.none { it.id == dto.c }) {
+                return Resource.Error("Gemini вернул несуществующую категорию.")
+            }
+            Resource.Success(dto.c)
+        } catch (e: IOException) {
+            Resource.Error("Нет соединения с сервером Gemini.", e)
+        } catch (e: HttpException) {
+            Resource.Error(httpErrorMessage(e), e)
+        } catch (e: SerializationException) {
+            Resource.Error("Gemini вернул некорректный JSON.", e)
+        }
+    }
+
+    private fun buildClassifyRequest(title: String, categories: List<Category>): GeminiGenerateContentRequest {
+        val categoriesList = categories.sortedBy { it.sortOrder }.joinToString(", ") { "${it.id}:${it.name}" }
+        val prompt = """
+            Определи наиболее подходящую категорию расходов для названия операции.
+            Категории (id:название): [$categoriesList]
+            Если явно подходящей категории нет — выбери самую нейтральную из списка.
+            Верни ТОЛЬКО валидный JSON-объект {"c":id_категории}. Никакого текста до/после, без markdown.
+        """.trimIndent()
+        return GeminiGenerateContentRequest(
+            systemInstruction = GeminiContent(parts = listOf(GeminiPart(prompt))),
+            contents = listOf(GeminiContent(role = "user", parts = listOf(GeminiPart(title)))),
+            generationConfig = GeminiGenerationConfig(
+                temperature = 0.1,
+                responseSchema = GeminiSchema(
+                    type = "OBJECT",
+                    properties = mapOf("c" to GeminiSchema(type = "INTEGER")),
+                    required = listOf("c")
+                )
+            )
+        )
     }
 
     /**

@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
-import net.sqlcipher.database.SQLiteDatabase
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -21,6 +20,6 @@ class App : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         // Загружает нативные библиотеки SQLCipher до первого обращения к зашифрованной БД.
-        SQLiteDatabase.loadLibs(this)
+        System.loadLibrary("sqlcipher")
     }
 }

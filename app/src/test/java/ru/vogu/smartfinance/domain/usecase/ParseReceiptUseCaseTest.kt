@@ -147,7 +147,7 @@ class ParseReceiptUseCaseTest {
         val splitItemsSlot = slot<List<SplitItem>>()
         coEvery {
             transactionRepository.createTransaction(
-                accountId = any(), toAccountId = any(), categoryId = capture(categoryIdSlot),
+                accountId = any(), toAccountId = any(), categoryId = captureNullable(categoryIdSlot),
                 amount = any(), transactionType = any(), title = any(), notes = any(),
                 timestamp = any(), source = TransactionSource.OCR, rawInputText = any(),
                 originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
@@ -175,7 +175,7 @@ class ParseReceiptUseCaseTest {
         val splitItemsSlot = slot<List<SplitItem>>()
         coEvery {
             transactionRepository.createTransaction(
-                accountId = any(), toAccountId = any(), categoryId = capture(categoryIdSlot),
+                accountId = any(), toAccountId = any(), categoryId = captureNullable(categoryIdSlot),
                 amount = capture(amountSlot), transactionType = any(), title = any(), notes = any(),
                 timestamp = any(), source = TransactionSource.OCR, rawInputText = any(),
                 originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
@@ -189,5 +189,181 @@ class ParseReceiptUseCaseTest {
         assertEquals(BigDecimal("135.40"), amountSlot.captured)
         assertNull(categoryIdSlot.captured)
         assertEquals(2, splitItemsSlot.captured.size)
+    }
+
+    @Test
+    fun `qr plus ocr prefers the per-item split and timestamps it at scan time, not the receipt's own date`() = runTest {
+        // Чат показывает только последние N операций по времени (CLAUDE.md §5.1) — старый
+        // физический чек со своей датой из QR не должен "исчезать" из ленты из-за этого.
+        val fiscalTimestamp = Instant.parse("2026-09-11T10:20:00Z")
+        val beforeCall = Instant.now()
+        val receipt = FiscalReceiptData(
+            timestamp = fiscalTimestamp,
+            amount = BigDecimal("135.40"),
+            fiscalDriveNumber = "99990789",
+            fiscalDocumentNumber = "12345",
+            fiscalSign = "987654321",
+            operationType = FiscalOperationType.SALE,
+            rawQrValue = "t=20260928T1430&s=135.40&fn=99990789&i=12345&fp=987654321&n=1"
+        )
+        val items = listOf(
+            ParsedReceiptItem(name = "Молоко", amount = BigDecimal("89.90"), categoryId = 1L),
+            ParsedReceiptItem(name = "Хлеб", amount = BigDecimal("45.50"), categoryId = 1L)
+        )
+        every { receiptRepository.parseFiscalQr(receipt.rawQrValue) } returns receipt
+        coEvery { receiptRepository.parseOcrLines(listOf("Молоко 89.90", "Хлеб 45.50")) } returns Resource.Success(items)
+
+        val timestampSlot = slot<Instant>()
+        val splitItemsSlot = slot<List<SplitItem>>()
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = any(), transactionType = any(), title = any(), notes = any(),
+                timestamp = capture(timestampSlot), source = TransactionSource.OCR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = capture(splitItemsSlot)
+            )
+        } answers { fakeTransaction(receipt.amount, categoryId = null, isSplit = true) }
+
+        val result = useCase.fromQrAndOcr(receipt.rawQrValue, listOf("Молоко 89.90", "Хлеб 45.50"))
+
+        assertTrue(result is Resource.Success)
+        assertTrue(timestampSlot.captured.isAfter(beforeCall) || timestampSlot.captured == beforeCall)
+        assertTrue(timestampSlot.captured != fiscalTimestamp)
+        assertEquals(2, splitItemsSlot.captured.size)
+        coVerify(exactly = 0) {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = any(), transactionType = any(), title = any(), notes = any(),
+                timestamp = any(), source = TransactionSource.QR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = any()
+            )
+        }
+    }
+
+    @Test
+    fun `qr plus ocr falls back to the lump QR transaction when no items are recognized`() = runTest {
+        val receipt = FiscalReceiptData(
+            timestamp = Instant.now(),
+            amount = BigDecimal("1540.50"),
+            fiscalDriveNumber = "99990789",
+            fiscalDocumentNumber = "12345",
+            fiscalSign = "987654321",
+            operationType = FiscalOperationType.SALE,
+            rawQrValue = "t=20260928T1430&s=1540.50&fn=99990789&i=12345&fp=987654321&n=1"
+        )
+        every { receiptRepository.parseFiscalQr(receipt.rawQrValue) } returns receipt
+        coEvery { receiptRepository.parseOcrLines(any()) } returns Resource.Error("Плохое освещение.")
+
+        val amountSlot = slot<BigDecimal>()
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = capture(amountSlot), transactionType = any(), title = any(), notes = any(),
+                timestamp = any(), source = TransactionSource.QR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = any()
+            )
+        } answers { fakeTransaction(receipt.amount, categoryId = 9L) }
+
+        val result = useCase.fromQrAndOcr(receipt.rawQrValue, listOf("нечитаемая строка"))
+
+        assertTrue(result is Resource.Success)
+        assertEquals(receipt.amount, amountSlot.captured)
+    }
+
+    @Test
+    fun `qr plus ocr with an unrecognized QR and no ocr items surfaces an error`() = runTest {
+        every { receiptRepository.parseFiscalQr("garbage") } returns null
+
+        val result = useCase.fromQrAndOcr("garbage", emptyList())
+
+        assertTrue(result is Resource.Error)
+        coVerify(exactly = 0) { receiptRepository.parseOcrLines(any()) }
+    }
+
+    @Test
+    fun `ocr items summing to less than the qr total get topped up with a remainder split item`() = runTest {
+        // Реальный кейс: OCR/Gemini прочитали только 2 из 3 позиций чека (72.20 + 100.00),
+        // а по QR реальная сумма чека — 194.30. Разница (22.10) не должна просто теряться.
+        val receipt = FiscalReceiptData(
+            timestamp = Instant.now(),
+            amount = BigDecimal("194.30"),
+            fiscalDriveNumber = "99990789",
+            fiscalDocumentNumber = "12345",
+            fiscalSign = "987654321",
+            operationType = FiscalOperationType.SALE,
+            rawQrValue = "t=20260928T1430&s=194.30&fn=99990789&i=12345&fp=987654321&n=1"
+        )
+        val items = listOf(
+            ParsedReceiptItem(name = "Товар", amount = BigDecimal("72.20"), categoryId = 1L),
+            ParsedReceiptItem(name = "Товар", amount = BigDecimal("100.00"), categoryId = 1L)
+        )
+        every { receiptRepository.parseFiscalQr(receipt.rawQrValue) } returns receipt
+        coEvery { receiptRepository.parseOcrLines(any()) } returns Resource.Success(items)
+
+        val amountSlot = slot<BigDecimal>()
+        val splitItemsSlot = slot<List<SplitItem>>()
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = capture(amountSlot), transactionType = any(), title = any(), notes = any(),
+                timestamp = any(), source = TransactionSource.OCR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = capture(splitItemsSlot)
+            )
+        } answers { fakeTransaction(receipt.amount, categoryId = null, isSplit = true) }
+
+        val result = useCase.fromQrAndOcr(receipt.rawQrValue, listOf("товар 72.20", "товар 100.00"))
+
+        assertTrue(result is Resource.Success)
+        assertEquals(0, receipt.amount.compareTo(amountSlot.captured))
+        assertEquals(3, splitItemsSlot.captured.size)
+        assertEquals(0, BigDecimal("22.10").compareTo(splitItemsSlot.captured.last().amount))
+    }
+
+    @Test
+    fun `ocr items summing to more than the qr total distrust the split and fall back to the qr lump`() = runTest {
+        val receipt = FiscalReceiptData(
+            timestamp = Instant.now(),
+            amount = BigDecimal("100.00"),
+            fiscalDriveNumber = "99990789",
+            fiscalDocumentNumber = "12345",
+            fiscalSign = "987654321",
+            operationType = FiscalOperationType.SALE,
+            rawQrValue = "t=20260928T1430&s=100.00&fn=99990789&i=12345&fp=987654321&n=1"
+        )
+        val items = listOf(
+            ParsedReceiptItem(name = "Товар", amount = BigDecimal("80.00"), categoryId = 1L),
+            ParsedReceiptItem(name = "Товар", amount = BigDecimal("80.00"), categoryId = 1L)
+        )
+        every { receiptRepository.parseFiscalQr(receipt.rawQrValue) } returns receipt
+        coEvery { receiptRepository.parseOcrLines(any()) } returns Resource.Success(items)
+
+        val amountSlot = slot<BigDecimal>()
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = capture(amountSlot), transactionType = any(), title = any(), notes = any(),
+                timestamp = any(), source = TransactionSource.QR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = any()
+            )
+        } answers { fakeTransaction(receipt.amount, categoryId = 9L) }
+
+        val result = useCase.fromQrAndOcr(receipt.rawQrValue, listOf("товар 80.00", "товар 80.00"))
+
+        assertTrue(result is Resource.Success)
+        assertEquals(0, receipt.amount.compareTo(amountSlot.captured))
+        coVerify(exactly = 0) {
+            transactionRepository.createTransaction(
+                accountId = any(), toAccountId = any(), categoryId = any(),
+                amount = any(), transactionType = any(), title = any(), notes = any(),
+                timestamp = any(), source = TransactionSource.OCR, rawInputText = any(),
+                originalCurrency = any(), transferFeeAmount = any(), recurringRuleId = any(),
+                splitItems = any()
+            )
+        }
     }
 }

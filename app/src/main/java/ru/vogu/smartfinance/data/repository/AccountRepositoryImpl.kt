@@ -9,6 +9,7 @@ import ru.vogu.smartfinance.data.mapper.toDomain
 import ru.vogu.smartfinance.data.mapper.toEntity
 import ru.vogu.smartfinance.domain.model.Account
 import ru.vogu.smartfinance.domain.model.AccountHint
+import ru.vogu.smartfinance.domain.model.CryptoAsset
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import java.math.BigDecimal
 import javax.inject.Inject
@@ -25,6 +26,10 @@ class AccountRepositoryImpl @Inject constructor(
 
     override suspend fun getById(id: Long): Account? = accountDao.getById(id)?.toDomain()
 
+    override fun observePrimary(): Flow<Account?> = accountDao.observePrimary().map { it?.toDomain() }
+
+    override suspend fun setPrimaryAccount(accountId: Long) = accountDao.setPrimary(accountId)
+
     override suspend fun findBestMatch(hint: AccountHint?): Account {
         val activeAccounts = accountDao.getActiveOnce()
         val fallback = activeAccounts.firstOrNull { it.name == Constants.DEFAULT_ACCOUNT_NAME }
@@ -33,8 +38,17 @@ class AccountRepositoryImpl @Inject constructor(
 
         if (hint == null) return fallback.toDomain()
 
-        val match = when (hint.normalizedKeyword) {
-            "cash" -> activeAccounts.firstOrNull { it.type == AccountType.CASH }
+        val match = when {
+            hint.normalizedKeyword == "cash" -> activeAccounts.firstOrNull { it.type == AccountType.CASH }
+            // Generic "крипта" (без конкретной монеты) — любой активный крипто-счёт.
+            hint.normalizedKeyword == "crypto" -> activeAccounts.firstOrNull { it.type == AccountType.CRYPTO }
+            // Конкретный тикер ("юсдт", "btc"...) — счёт СТРОГО с такой же валютой, а не
+            // первый попавшийся крипто-счёт: суммы у разных монет несопоставимы (400 USDT
+            // ≠ 400 BTC), поэтому при отсутствии точного совпадения падаем в fallback ниже,
+            // а не подставляем чужую крипто-валюту.
+            CryptoAsset.fromCode(hint.normalizedKeyword) != null -> activeAccounts.firstOrNull { account ->
+                account.type == AccountType.CRYPTO && account.currency.equals(hint.normalizedKeyword, ignoreCase = true)
+            }
             else -> activeAccounts.firstOrNull { account ->
                 val nameLower = account.name.lowercase()
                 nameLower.contains(hint.normalizedKeyword) || nameLower.contains(hint.rawKeyword.lowercase())

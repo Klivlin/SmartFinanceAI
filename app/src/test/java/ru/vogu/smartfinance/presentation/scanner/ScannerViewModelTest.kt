@@ -66,36 +66,36 @@ class ScannerViewModelTest {
     }
 
     @Test
-    fun `successful QR parse clears processing state`() = runTest {
-        coEvery { parseReceiptUseCase.fromFiscalQr("qr-value") } returns Resource.Success(fakeTransaction)
+    fun `successful receipt scan clears processing state`() = runTest {
+        coEvery { parseReceiptUseCase.fromQrAndOcr("qr-value", listOf("Молоко 89.90")) } returns Resource.Success(fakeTransaction)
 
-        viewModel.onIntent(ScannerIntent.BarcodeDetected("qr-value"))
+        viewModel.onIntent(ScannerIntent.ReceiptScanned("qr-value", listOf("Молоко 89.90")))
 
-        coVerify(exactly = 1) { parseReceiptUseCase.fromFiscalQr("qr-value") }
+        coVerify(exactly = 1) { parseReceiptUseCase.fromQrAndOcr("qr-value", listOf("Молоко 89.90")) }
         assertFalse(viewModel.state.value.isProcessing)
     }
 
     @Test
-    fun `failed QR parse surfaces the error and does not retry the same value`() = runTest {
-        coEvery { parseReceiptUseCase.fromFiscalQr("bad-qr") } returns Resource.Error("QR не распознан.")
+    fun `failed receipt scan surfaces the error and does not retry the same QR value`() = runTest {
+        coEvery { parseReceiptUseCase.fromQrAndOcr("bad-qr", emptyList()) } returns Resource.Error("QR не распознан.")
 
-        viewModel.onIntent(ScannerIntent.BarcodeDetected("bad-qr"))
-        viewModel.onIntent(ScannerIntent.BarcodeDetected("bad-qr"))
+        viewModel.onIntent(ScannerIntent.ReceiptScanned("bad-qr", emptyList()))
+        viewModel.onIntent(ScannerIntent.ReceiptScanned("bad-qr", emptyList()))
 
         assertEquals("QR не распознан.", viewModel.state.value.errorMessage)
         assertFalse(viewModel.state.value.isProcessing)
-        coVerify(exactly = 1) { parseReceiptUseCase.fromFiscalQr("bad-qr") }
+        coVerify(exactly = 1) { parseReceiptUseCase.fromQrAndOcr("bad-qr", emptyList()) }
     }
 
     @Test
     fun `a new QR value after a failure is still attempted`() = runTest {
-        coEvery { parseReceiptUseCase.fromFiscalQr("bad-qr") } returns Resource.Error("QR не распознан.")
-        coEvery { parseReceiptUseCase.fromFiscalQr("good-qr") } returns Resource.Success(fakeTransaction)
+        coEvery { parseReceiptUseCase.fromQrAndOcr("bad-qr", emptyList()) } returns Resource.Error("QR не распознан.")
+        coEvery { parseReceiptUseCase.fromQrAndOcr("good-qr", emptyList()) } returns Resource.Success(fakeTransaction)
 
-        viewModel.onIntent(ScannerIntent.BarcodeDetected("bad-qr"))
-        viewModel.onIntent(ScannerIntent.BarcodeDetected("good-qr"))
+        viewModel.onIntent(ScannerIntent.ReceiptScanned("bad-qr", emptyList()))
+        viewModel.onIntent(ScannerIntent.ReceiptScanned("good-qr", emptyList()))
 
-        coVerify(exactly = 1) { parseReceiptUseCase.fromFiscalQr("good-qr") }
+        coVerify(exactly = 1) { parseReceiptUseCase.fromQrAndOcr("good-qr", emptyList()) }
     }
 
     @Test

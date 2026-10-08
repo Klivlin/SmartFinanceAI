@@ -7,6 +7,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -31,6 +32,8 @@ import ru.vogu.smartfinance.domain.model.DashboardSummary
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.AccountRepository
 import ru.vogu.smartfinance.domain.repository.CategoryRepository
+import ru.vogu.smartfinance.domain.repository.ChatHistoryRepository
+import ru.vogu.smartfinance.domain.repository.OnboardingRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import ru.vogu.smartfinance.domain.usecase.ObserveDashboardSummaryUseCase
 import ru.vogu.smartfinance.domain.usecase.ProcessNliInputUseCase
@@ -49,6 +52,8 @@ class ChatViewModelTest {
     private val transactionRepository: TransactionRepository = mockk()
     private val categoryRepository: CategoryRepository = mockk()
     private val accountRepository: AccountRepository = mockk()
+    private val chatHistoryRepository: ChatHistoryRepository = mockk()
+    private val onboardingRepository: OnboardingRepository = mockk()
 
     private val recentTransactions = MutableStateFlow<List<Transaction>>(emptyList())
 
@@ -84,9 +89,11 @@ class ChatViewModelTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
 
-        every { transactionRepository.observeRecent(any()) } returns recentTransactions
+        every { transactionRepository.observeRecentByEntryOrder(any()) } returns recentTransactions
         every { categoryRepository.observeAll() } returns flowOf(listOf(fakeCategory))
         every { accountRepository.observeAll() } returns flowOf(listOf(fakeAccount))
+        every { chatHistoryRepository.clearedAt } returns flowOf(null)
+        every { onboardingRepository.isInitialBalancePrompted } returns flowOf(true)
         every { observeDashboardSummaryUseCase() } returns flowOf(
             DashboardSummary(
                 totalBalance = BigDecimal("1000"),
@@ -104,7 +111,9 @@ class ChatViewModelTest {
             observeDashboardSummaryUseCase = observeDashboardSummaryUseCase,
             transactionRepository = transactionRepository,
             categoryRepository = categoryRepository,
-            accountRepository = accountRepository
+            accountRepository = accountRepository,
+            chatHistoryRepository = chatHistoryRepository,
+            onboardingRepository = onboardingRepository
         )
     }
 
@@ -149,7 +158,7 @@ class ChatViewModelTest {
             transaction(2L, "вчера 3500 за спортзал, а сегодня 1000 на сбер", now.plusSeconds(1))
         )
 
-        val messages = viewModel.state.value.messages
+        val messages = viewModel.state.first { it.messages.isNotEmpty() }.messages
 
         assertEquals(3, messages.size)
         assertTrue(messages[0] is ChatMessage.UserText)
@@ -162,7 +171,7 @@ class ChatViewModelTest {
         keepStateAlive()
         recentTransactions.value = listOf(transaction(1L, null, Instant.now()))
 
-        val messages = viewModel.state.value.messages
+        val messages = viewModel.state.first { it.messages.isNotEmpty() }.messages
 
         assertEquals(1, messages.size)
         assertTrue(messages[0] is ChatMessage.TransactionCard)
@@ -216,6 +225,7 @@ class ChatViewModelTest {
     @Test
     fun `undo deletes the transaction via the use case`() = runTest {
         keepStateAlive()
+        coEvery { transactionRepository.getById(1L) } returns transaction(1L, null, Instant.now())
         coEvery { undoTransactionUseCase(1L) } returns Resource.Success(Unit)
 
         viewModel.onIntent(ChatIntent.UndoTransaction(1L))
@@ -226,11 +236,54 @@ class ChatViewModelTest {
     @Test
     fun `undo failure surfaces the error message`() = runTest {
         keepStateAlive()
+        coEvery { transactionRepository.getById(1L) } returns transaction(1L, null, Instant.now())
         coEvery { undoTransactionUseCase(1L) } returns Resource.Error("Транзакция не найдена.")
 
         viewModel.onIntent(ChatIntent.UndoTransaction(1L))
 
         assertEquals("Транзакция не найдена.", viewModel.state.value.errorMessage)
+    }
+
+    @Test
+    fun `undo emits the deleted transaction so it can be restored`() = runTest {
+        keepStateAlive()
+        val tx = transaction(1L, null, Instant.now())
+        coEvery { transactionRepository.getById(1L) } returns tx
+        coEvery { undoTransactionUseCase(1L) } returns Resource.Success(Unit)
+
+        viewModel.onIntent(ChatIntent.UndoTransaction(1L))
+
+        // UnconfinedTestDispatcher запускает viewModelScope.launch эагерно — к этому моменту
+        // эффект уже лежит в канале, буферизованном достаточно для одного элемента.
+        val effect = viewModel.effect.first()
+        assertTrue(effect is ChatEffect.TransactionDeleted && effect.transaction == tx)
+    }
+
+    @Test
+    fun `restoring a transaction re-creates it with the same fields`() = runTest {
+        keepStateAlive()
+        val tx = transaction(7L, null, Instant.now())
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = tx.accountId, toAccountId = tx.toAccountId, categoryId = tx.categoryId,
+                amount = tx.amount, transactionType = tx.transactionType, title = tx.title, notes = tx.notes,
+                timestamp = tx.timestamp, source = tx.source, rawInputText = tx.rawInputText,
+                originalCurrency = tx.originalCurrency, transferFeeAmount = tx.transferFeeAmount,
+                recurringRuleId = tx.recurringRuleId, splitItems = tx.splitItems
+            )
+        } returns tx
+
+        viewModel.onIntent(ChatIntent.RestoreTransaction(tx))
+
+        coVerify(exactly = 1) {
+            transactionRepository.createTransaction(
+                accountId = tx.accountId, toAccountId = tx.toAccountId, categoryId = tx.categoryId,
+                amount = tx.amount, transactionType = tx.transactionType, title = tx.title, notes = tx.notes,
+                timestamp = tx.timestamp, source = tx.source, rawInputText = tx.rawInputText,
+                originalCurrency = tx.originalCurrency, transferFeeAmount = tx.transferFeeAmount,
+                recurringRuleId = tx.recurringRuleId, splitItems = tx.splitItems
+            )
+        }
     }
 
     @Test

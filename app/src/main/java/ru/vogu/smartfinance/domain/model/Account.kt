@@ -15,7 +15,9 @@ data class Account(
     val creditLimit: BigDecimal?,
     val gracePeriodDays: Int?,
     val statementDay: Int?,
+    val interestRatePercent: BigDecimal? = null,
     val isArchived: Boolean,
+    val isPrimary: Boolean = false,
     val sortOrder: Int,
     val createdAt: Instant
 ) {

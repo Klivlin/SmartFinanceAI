@@ -62,6 +62,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Экспорт CSV (CLAUDE.md §2.7) — файл пишется в кэш приложения и отдаётся
+             во внешний интент "Поделиться" через content:// Uri, без прямого доступа
+             к общему хранилищу другим приложениям. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- WorkManager инициализируется вручную через HiltWorkerFactory в App.kt,
              поэтому автоматический default-инициализатор отключаем. -->
         <provider

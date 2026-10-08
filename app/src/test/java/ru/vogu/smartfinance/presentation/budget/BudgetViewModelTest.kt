@@ -21,7 +21,11 @@ import org.junit.Test
 import ru.vogu.smartfinance.core.common.Resource
 import ru.vogu.smartfinance.domain.model.Category
 import ru.vogu.smartfinance.domain.model.CategoryBudgetStatus
+import ru.vogu.smartfinance.domain.usecase.CreateCategoryUseCase
 import ru.vogu.smartfinance.domain.usecase.GetBudgetStatusUseCase
+import ru.vogu.smartfinance.domain.usecase.GetIncomeCategoryStatusUseCase
+import ru.vogu.smartfinance.domain.usecase.ReorderCategoryUseCase
+import ru.vogu.smartfinance.domain.usecase.UpdateCategoryAppearanceUseCase
 import ru.vogu.smartfinance.domain.usecase.UpdateCategoryBudgetUseCase
 import java.math.BigDecimal
 
@@ -29,7 +33,11 @@ import java.math.BigDecimal
 class BudgetViewModelTest {
 
     private val getBudgetStatusUseCase: GetBudgetStatusUseCase = mockk()
+    private val getIncomeCategoryStatusUseCase: GetIncomeCategoryStatusUseCase = mockk()
     private val updateCategoryBudgetUseCase: UpdateCategoryBudgetUseCase = mockk()
+    private val updateCategoryAppearanceUseCase: UpdateCategoryAppearanceUseCase = mockk()
+    private val createCategoryUseCase: CreateCategoryUseCase = mockk()
+    private val reorderCategoryUseCase: ReorderCategoryUseCase = mockk()
 
     private val statuses = MutableStateFlow<List<CategoryBudgetStatus>>(emptyList())
 
@@ -44,7 +52,15 @@ class BudgetViewModelTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         every { getBudgetStatusUseCase() } returns statuses
-        viewModel = BudgetViewModel(getBudgetStatusUseCase, updateCategoryBudgetUseCase)
+        every { getIncomeCategoryStatusUseCase() } returns MutableStateFlow(emptyList())
+        viewModel = BudgetViewModel(
+            getBudgetStatusUseCase,
+            getIncomeCategoryStatusUseCase,
+            updateCategoryBudgetUseCase,
+            updateCategoryAppearanceUseCase,
+            createCategoryUseCase,
+            reorderCategoryUseCase
+        )
     }
 
     @After

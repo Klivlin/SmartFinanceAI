@@ -60,9 +60,20 @@ interface TransactionDao {
     @Query("SELECT * FROM split_items WHERE transaction_id = :transactionId")
     suspend fun getSplitItems(transactionId: Long): List<SplitItemEntity>
 
-    /** Лента для главного Chat-экрана — самые новые сверху. */
+    /** Полная история для экрана "История"/экспорта — сортировка по фактической дате операции. */
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC, id DESC LIMIT :limit")
     fun observeRecent(limit: Int = 50): Flow<List<TransactionEntity>>
+
+    /**
+     * Лента для главного Chat-экрана — сортировка по МОМЕНТУ ВВОДА (created_at), а не по
+     * дате самой операции (timestamp). Это разные вещи: чат — это разговор, его порядок
+     * определяется тем, КОГДА пользователь что-то написал, а не тем, к какой дате относится
+     * траты. Раньше обе ленты сортировались по timestamp — операция "вчера такси 500", только
+     * что введённая ПРЯМО СЕЙЧАС, вставала выше сегодняшних сообщений и визуально терялась
+     * (автоскролл в конец ленты её не показывал), хотя reserve создавалась корректно.
+     */
+    @Query("SELECT * FROM transactions ORDER BY created_at DESC, id DESC LIMIT :limit")
+    fun observeRecentByEntryOrder(limit: Int = 50): Flow<List<TransactionEntity>>
 
     @Query("SELECT * FROM transactions WHERE account_id = :accountId OR to_account_id = :accountId ORDER BY timestamp DESC")
     fun observeByAccount(accountId: Long): Flow<List<TransactionEntity>>
@@ -85,6 +96,10 @@ interface TransactionDao {
     )
     suspend fun getByDateRangeOnce(fromInclusive: Instant, toExclusive: Instant): List<TransactionEntity>
 
+    /** Для ежедневного напоминания "внести расходы" — CLAUDE.md §2.4/§5.1: есть ли уже операции сегодня. */
+    @Query("SELECT COUNT(*) FROM transactions WHERE timestamp >= :fromInclusive AND timestamp < :toExclusive")
+    suspend fun countByDateRange(fromInclusive: Instant, toExclusive: Instant): Int
+
     @Query("SELECT * FROM transactions WHERE category_id = :categoryId ORDER BY timestamp DESC")
     fun observeByCategory(categoryId: Long): Flow<List<TransactionEntity>>
 
@@ -102,6 +117,18 @@ interface TransactionDao {
         """
     )
     fun observeSpendingByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategorySpendingRow>>
+
+    /** Сумма доходов по категории за период — для вкладки "Доходы" на экране "Категории". */
+    @Query(
+        """
+        SELECT category_id AS categoryId, COALESCE(SUM(amount_base), 0) AS totalAmountBase
+        FROM transactions
+        WHERE transaction_type = 'INCOME'
+          AND timestamp >= :fromInclusive AND timestamp < :toExclusive
+        GROUP BY category_id
+        """
+    )
+    fun observeIncomeByCategory(fromInclusive: Instant, toExclusive: Instant): Flow<List<CategorySpendingRow>>
 
     @Query(
         """

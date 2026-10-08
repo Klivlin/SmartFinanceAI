@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -15,6 +16,7 @@ import ru.vogu.smartfinance.core.database.entity.TransactionType
 import ru.vogu.smartfinance.domain.model.Account
 import ru.vogu.smartfinance.domain.model.Transaction
 import ru.vogu.smartfinance.domain.repository.AccountRepository
+import ru.vogu.smartfinance.domain.repository.ExchangeRateRepository
 import ru.vogu.smartfinance.domain.repository.TransactionRepository
 import java.math.BigDecimal
 import java.time.Instant
@@ -23,8 +25,16 @@ class ManageAccountUseCaseTest {
 
     private val accountRepository: AccountRepository = mockk()
     private val transactionRepository: TransactionRepository = mockk()
+    private val exchangeRateRepository: ExchangeRateRepository = mockk()
 
-    private val useCase = ManageAccountUseCase(accountRepository, transactionRepository)
+    private val useCase = ManageAccountUseCase(accountRepository, transactionRepository, exchangeRateRepository)
+
+    private fun fakeAccount(id: Long, currency: String = "RUB", isPrimary: Boolean = false) = Account(
+        id = id, name = "Счёт $id", type = AccountType.DEBIT_CARD, balance = BigDecimal("1000"),
+        currency = currency, isCredit = false, creditLimit = null, gracePeriodDays = null,
+        statementDay = null, interestRatePercent = null, isArchived = false, isPrimary = isPrimary,
+        sortOrder = 0, createdAt = Instant.now()
+    )
 
     private fun fakeTransaction() = Transaction(
         id = 1L, accountId = 1L, toAccountId = 2L, categoryId = null,
@@ -61,6 +71,7 @@ class ManageAccountUseCaseTest {
     fun `valid account is created with the normalized currency code`() = runTest {
         val accountSlot = slot<Account>()
         coEvery { accountRepository.createAccount(capture(accountSlot)) } returns 42L
+        coEvery { accountRepository.observePrimary() } returns flowOf(fakeAccount(id = 1L, isPrimary = true))
 
         val result = useCase.createAccount(
             name = "Сберкопилка",
@@ -77,6 +88,7 @@ class ManageAccountUseCaseTest {
 
     @Test
     fun `archive delegates to the repository`() = runTest {
+        coEvery { accountRepository.getById(5L) } returns fakeAccount(id = 5L, isPrimary = false)
         coEvery { accountRepository.archiveAccount(5L) } returns Unit
 
         val result = useCase.archiveAccount(5L)
@@ -90,7 +102,7 @@ class ManageAccountUseCaseTest {
         val result = useCase.transfer(fromAccountId = 1L, toAccountId = 1L, amount = BigDecimal("100"))
 
         assertTrue(result is Resource.Error)
-        coVerify(exactly = 0) { transactionRepository.createTransaction(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { transactionRepository.createTransaction(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -102,17 +114,39 @@ class ManageAccountUseCaseTest {
 
     @Test
     fun `valid transfer delegates to the transaction repository as TRANSFER`() = runTest {
+        coEvery { accountRepository.getById(1L) } returns fakeAccount(id = 1L, currency = "RUB")
+        coEvery { accountRepository.getById(2L) } returns fakeAccount(id = 2L, currency = "RUB")
         coEvery {
             transactionRepository.createTransaction(
                 accountId = 1L, toAccountId = 2L, categoryId = null,
                 amount = BigDecimal("500"), transactionType = TransactionType.TRANSFER,
                 title = any(), notes = any(), timestamp = any(), source = TransactionSource.MANUAL,
-                rawInputText = any(), originalCurrency = any(), transferFeeAmount = BigDecimal("10"),
-                recurringRuleId = any(), splitItems = any()
+                rawInputText = any(), originalCurrency = "RUB", transferFeeAmount = BigDecimal("10"),
+                toAmount = null, recurringRuleId = any(), splitItems = any()
             )
         } returns fakeTransaction()
 
         val result = useCase.transfer(fromAccountId = 1L, toAccountId = 2L, amount = BigDecimal("500"), feeAmount = BigDecimal("10"))
+
+        assertTrue(result is Resource.Success)
+    }
+
+    @Test
+    fun `transfer between accounts in different currencies converts by real rate`() = runTest {
+        coEvery { accountRepository.getById(1L) } returns fakeAccount(id = 1L, currency = "USD")
+        coEvery { accountRepository.getById(2L) } returns fakeAccount(id = 2L, currency = "RUB")
+        coEvery { exchangeRateRepository.convert(BigDecimal("100"), "USD", "RUB") } returns BigDecimal("9500.00")
+        coEvery {
+            transactionRepository.createTransaction(
+                accountId = 1L, toAccountId = 2L, categoryId = null,
+                amount = BigDecimal("100"), transactionType = TransactionType.TRANSFER,
+                title = any(), notes = any(), timestamp = any(), source = TransactionSource.MANUAL,
+                rawInputText = any(), originalCurrency = "USD", transferFeeAmount = null,
+                toAmount = BigDecimal("9500.00"), recurringRuleId = any(), splitItems = any()
+            )
+        } returns fakeTransaction()
+
+        val result = useCase.transfer(fromAccountId = 1L, toAccountId = 2L, amount = BigDecimal("100"))
 
         assertTrue(result is Resource.Success)
     }

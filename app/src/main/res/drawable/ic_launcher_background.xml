@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Кремовый фон приложения (neutral_050, см. core/ui/theme/Color.kt) — раньше здесь был
+     произвольный синий (#0A84FF), не совпадающий ни с одним реальным цветом палитры. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
