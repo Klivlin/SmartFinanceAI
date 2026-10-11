@@ -43,10 +43,22 @@ private data class ReferenceData(
     val accounts: List<Account> = emptyList()
 )
 
-/** Чисто UI-состояние, которое не хранится в Room: локальное эхо ввода и статус "подтверждено". */
+/**
+ * Чисто UI-состояние, которое не хранится в Room: локальное эхо ввода и набор карточек,
+ * у которых ещё показан полный ряд действий (Отменить/Изменить/Подтвердить) — CLAUDE.md §5.1.
+ *
+ * [pendingActionTransactionIds] хранит противоположное тому, что хранил бы интуитивный
+ * "confirmedTransactionIds": набор ЕЩЁ НЕ свёрнутых карточек, а не уже подтверждённых. Это
+ * осознанно — "Подтвердить" не влияет на баланс (операция уже применена оптимистично при
+ * создании, см. [sendMessage]), это чисто UI-квитанция "я увидел карточку". Раз quittance не
+ * финансовая, её нет смысла переживать перезапуск процесса: при пересоздании ViewModel это
+ * множество пустое, и ВСЕ карточки истории сразу рендерятся свёрнутыми (как уже просмотренные),
+ * а не зависают с кнопкой "Подтвердить" навсегда — именно так терялась уверенность пользователя,
+ * что операция вообще применилась, при каждом перезапуске приложения.
+ */
 private data class LocalOverlay(
     val pendingUserMessage: ChatMessage.UserText? = null,
-    val confirmedTransactionIds: Set<Long> = emptySet()
+    val pendingActionTransactionIds: Set<Long> = emptySet()
 )
 
 /**
@@ -102,7 +114,7 @@ class ChatViewModel @Inject constructor(
                 transactions = visibleTransactions,
                 categoriesById = ref.categories.associateBy { it.id },
                 accountsById = ref.accounts.associateBy { it.id },
-                confirmedIds = overlay.confirmedTransactionIds,
+                pendingActionIds = overlay.pendingActionTransactionIds,
                 pending = overlay.pendingUserMessage
             ),
             editingCategories = ref.categories,
@@ -203,8 +215,16 @@ class ChatViewModel @Inject constructor(
             when (val result = processNliInputUseCase(text)) {
                 is Resource.Success -> {
                     // Настоящие Action Card-ы придут из observeRecent() — Room остаётся
-                    // единственным источником правды, локальное эхо больше не нужно.
-                    localOverlay.update { it.copy(pendingUserMessage = null) }
+                    // единственным источником правды, локальное эхо больше не нужно. Новые
+                    // карточки показываются с полным рядом действий (Отменить/Изменить/
+                    // Подтвердить), пока их явно не подтвердят — см. doc-комментарий [LocalOverlay].
+                    val newIds = result.data.map { it.id }.toSet()
+                    localOverlay.update {
+                        it.copy(
+                            pendingUserMessage = null,
+                            pendingActionTransactionIds = it.pendingActionTransactionIds + newIds
+                        )
+                    }
                     uiState.update { it.copy(isSending = false) }
                     // Операция "задним числом" ("вчера такси 500") сортируется по РЕАЛЬНОЙ
                     // дате среди всех сообщений ленты — если в чате уже есть более свежие
@@ -231,7 +251,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun confirmTransaction(transactionId: Long) {
-        localOverlay.update { it.copy(confirmedTransactionIds = it.confirmedTransactionIds + transactionId) }
+        localOverlay.update { it.copy(pendingActionTransactionIds = it.pendingActionTransactionIds - transactionId) }
     }
 
     private fun undoTransaction(transactionId: Long) {
@@ -242,7 +262,7 @@ class ChatViewModel @Inject constructor(
             when (val result = undoTransactionUseCase(transactionId)) {
                 is Resource.Error -> uiState.update { it.copy(errorMessage = result.message) }
                 is Resource.Success -> {
-                    localOverlay.update { it.copy(confirmedTransactionIds = it.confirmedTransactionIds - transactionId) }
+                    localOverlay.update { it.copy(pendingActionTransactionIds = it.pendingActionTransactionIds - transactionId) }
                     if (transactionToDelete != null) {
                         _effect.send(ChatEffect.TransactionDeleted(transactionToDelete))
                     }
@@ -254,7 +274,7 @@ class ChatViewModel @Inject constructor(
 
     private fun restoreTransaction(transaction: Transaction) {
         viewModelScope.launch {
-            transactionRepository.createTransaction(
+            val restored = transactionRepository.createTransaction(
                 accountId = transaction.accountId,
                 toAccountId = transaction.toAccountId,
                 categoryId = transaction.categoryId,
@@ -271,6 +291,7 @@ class ChatViewModel @Inject constructor(
                 recurringRuleId = transaction.recurringRuleId,
                 splitItems = transaction.splitItems
             )
+            localOverlay.update { it.copy(pendingActionTransactionIds = it.pendingActionTransactionIds + restored.id) }
             _effect.send(ChatEffect.ScrollToBottom)
         }
     }
@@ -300,7 +321,7 @@ class ChatViewModel @Inject constructor(
         transactions: List<Transaction>,
         categoriesById: Map<Long, Category>,
         accountsById: Map<Long, Account>,
-        confirmedIds: Set<Long>,
+        pendingActionIds: Set<Long>,
         pending: ChatMessage.UserText?
     ): List<ChatMessage> {
         val ascending = transactions.sortedBy { it.createdAt }
@@ -325,7 +346,7 @@ class ChatViewModel @Inject constructor(
                 category = tx.categoryId?.let { categoriesById[it] },
                 account = accountsById[tx.accountId],
                 toAccount = tx.toAccountId?.let { accountsById[it] },
-                isConfirmed = tx.id in confirmedIds,
+                isConfirmed = tx.id !in pendingActionIds,
                 splitItemCategories = tx.splitItems.map { it.categoryId?.let { id -> categoriesById[id] } }
             )
         }

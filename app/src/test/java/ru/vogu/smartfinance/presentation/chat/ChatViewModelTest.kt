@@ -94,7 +94,10 @@ class ChatViewModelTest {
         every { accountRepository.observeAll() } returns flowOf(listOf(fakeAccount))
         every { chatHistoryRepository.clearedAt } returns flowOf(null)
         every { onboardingRepository.isInitialBalancePrompted } returns flowOf(true)
-        every { observeDashboardSummaryUseCase() } returns flowOf(
+        // any() вместо точного eq(Instant.now()) — invoke() вызывается с дефолтным параметром
+        // now = Instant.now(), вычисляемым заново при каждом реальном вызове; точный eq-матчер
+        // гонится с системными часами и даёт "no answer found" почти при каждом запуске теста.
+        every { observeDashboardSummaryUseCase(any()) } returns flowOf(
             DashboardSummary(
                 totalBalance = BigDecimal("1000"),
                 baseCurrency = "RUB",
@@ -212,14 +215,39 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `confirm marks the matching card as confirmed without touching the repository`() = runTest {
+    fun `transaction loaded from history (not created this session) defaults to confirmed`() = runTest {
+        // CLAUDE.md §5.1: "Подтвердить" — чисто UI-квитанция, не влияющая на баланс (он уже
+        // применён при создании операции). Поэтому карточки, пришедшие из истории Room (а не
+        // только что созданные в ТЕКУЩЕЙ сессии ViewModel через sendMessage/restoreTransaction),
+        // должны сразу рендериться свёрнутыми — иначе после каждого перезапуска приложения
+        // пользователь видел бы кнопку "Подтвердить" на уже обработанных операциях навсегда.
         keepStateAlive()
         recentTransactions.value = listOf(transaction(1L, null, Instant.now()))
 
+        val card = viewModel.state.first { it.messages.isNotEmpty() }
+            .messages.filterIsInstance<ChatMessage.TransactionCard>().first()
+        assertTrue(card.isConfirmed)
+    }
+
+    @Test
+    fun `a transaction created this session starts unconfirmed until explicitly confirmed`() = runTest {
+        keepStateAlive()
+        val created = transaction(1L, "такси 450", Instant.now())
+        coEvery { processNliInputUseCase("такси 450") } returns Resource.Success(listOf(created))
+
+        viewModel.onIntent(ChatIntent.InputTextChanged("такси 450"))
+        viewModel.onIntent(ChatIntent.SendMessage)
+        recentTransactions.value = listOf(created)
+
+        val cardBeforeConfirm = viewModel.state.first { it.messages.isNotEmpty() }
+            .messages.filterIsInstance<ChatMessage.TransactionCard>().first()
+        assertFalse(cardBeforeConfirm.isConfirmed)
+
         viewModel.onIntent(ChatIntent.ConfirmTransaction(1L))
 
-        val card = viewModel.state.value.messages.filterIsInstance<ChatMessage.TransactionCard>().first()
-        assertTrue(card.isConfirmed)
+        val cardAfterConfirm = viewModel.state.first { it.messages.isNotEmpty() }
+            .messages.filterIsInstance<ChatMessage.TransactionCard>().first()
+        assertTrue(cardAfterConfirm.isConfirmed)
     }
 
     @Test
